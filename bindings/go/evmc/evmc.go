@@ -199,6 +199,10 @@ func (vm *VM) SetOption(name string, value string) (err error) {
 	return err
 }
 
+func (vm *VM) GetHandle() unsafe.Pointer {
+	return unsafe.Pointer(vm.handle)
+}
+
 type Result struct {
 	Output    []byte
 	GasLeft   int64
