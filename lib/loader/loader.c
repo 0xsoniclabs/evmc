@@ -20,6 +20,8 @@
 #define DLL_OPEN(filename) LoadLibrary(filename)
 #define DLL_CLOSE(handle) FreeLibrary(handle)
 #define DLL_GET_CREATE_FN(handle, name) (evmc_create_fn)(uintptr_t) GetProcAddress(handle, name)
+#define DLL_GET_CREATE_STEPABLE_FN(handle, name) \
+    (evmc_create_steppable_fn)(uintptr_t) GetProcAddress(handle, name)
 #define DLL_GET_ERROR_MSG() NULL
 #else
 #include <dlfcn.h>
@@ -28,6 +30,8 @@
 #define DLL_CLOSE(handle) dlclose(handle)
 // NOLINTNEXTLINE(performance-no-int-to-ptr)
 #define DLL_GET_CREATE_FN(handle, name) (evmc_create_fn)(uintptr_t) dlsym(handle, name)
+#define DLL_GET_CREATE_STEPABLE_FN(handle, name) \
+    (evmc_create_steppable_fn)(uintptr_t) dlsym(handle, name)
 #define DLL_GET_ERROR_MSG() dlerror()
 #endif
 
@@ -319,4 +323,134 @@ exit:
     if (vm)
         evmc_destroy(vm);
     return NULL;
+}
+
+
+evmc_create_steppable_fn evmc_load_steppable(const char* filename,
+                                             enum evmc_loader_error_code* error_code)
+{
+    last_error_msg = NULL;  // Reset last error.
+    enum evmc_loader_error_code ec = EVMC_LOADER_SUCCESS;
+    evmc_create_steppable_fn create_fn = NULL;
+
+    if (!filename)
+    {
+        ec = set_error(EVMC_LOADER_INVALID_ARGUMENT, "invalid argument: file name cannot be null");
+        goto exit;
+    }
+
+    const size_t length = strlen(filename);
+    if (length == 0)
+    {
+        ec = set_error(EVMC_LOADER_INVALID_ARGUMENT, "invalid argument: file name cannot be empty");
+        goto exit;
+    }
+    else if (length > PATH_MAX_LENGTH)
+    {
+        ec = set_error(EVMC_LOADER_INVALID_ARGUMENT,
+                       "invalid argument: file name is too long (%d, maximum allowed length is %d)",
+                       (int)length, PATH_MAX_LENGTH);
+        goto exit;
+    }
+
+    DLL_HANDLE handle = DLL_OPEN(filename);
+    if (!handle)
+    {
+        // Get error message if available.
+        last_error_msg = DLL_GET_ERROR_MSG();
+        if (last_error_msg)
+            ec = EVMC_LOADER_CANNOT_OPEN;
+        else
+            ec = set_error(EVMC_LOADER_CANNOT_OPEN, "cannot open %s", filename);
+        goto exit;
+    }
+
+    // Create name buffer with the prefix.
+    const char prefix[] = "evmc_create_steppable_";
+    const size_t prefix_length = strlen(prefix);
+    char prefixed_name[sizeof(prefix) + PATH_MAX_LENGTH];
+    strcpy_sx(prefixed_name, sizeof(prefixed_name), prefix);
+
+    // Find filename in the path.
+    const char* sep_pos = strrchr(filename, '/');
+#ifdef _WIN32
+    // On Windows check also Windows classic path separator.
+    const char* sep_pos_windows = strrchr(filename, '\\');
+    sep_pos = sep_pos_windows > sep_pos ? sep_pos_windows : sep_pos;
+#endif
+    const char* name_pos = sep_pos ? sep_pos + 1 : filename;
+
+    // Skip "lib" prefix if present.
+    const char lib_prefix[] = "lib";
+    const size_t lib_prefix_length = strlen(lib_prefix);
+    if (strncmp(name_pos, lib_prefix, lib_prefix_length) == 0)
+        name_pos += lib_prefix_length;
+
+    char* base_name = prefixed_name + prefix_length;
+    strcpy_sx(base_name, PATH_MAX_LENGTH, name_pos);
+
+    // Trim all file extensions.
+    char* ext_pos = strchr(prefixed_name, '.');
+    if (ext_pos)
+        *ext_pos = 0;
+
+    // Replace all "-" with "_".
+    char* dash_pos = base_name;
+    while ((dash_pos = strchr(dash_pos, '-')) != NULL)
+        *dash_pos++ = '_';
+
+    // Search for the built function name.
+    create_fn = DLL_GET_CREATE_STEPABLE_FN(handle, prefixed_name);
+
+    if (!create_fn)
+        create_fn = DLL_GET_CREATE_STEPABLE_FN(handle, "evmc_create_steppable");
+
+    if (!create_fn)
+    {
+        DLL_CLOSE(handle);
+        ec = set_error(EVMC_LOADER_SYMBOL_NOT_FOUND, "EVMC create function not found in %s",
+                       filename);
+    }
+
+exit:
+    if (error_code)
+        *error_code = ec;
+    return create_fn;
+}
+
+struct evmc_vm_steppable* evmc_load_and_create_steppable(const char* filename,
+                                                         enum evmc_loader_error_code* error_code)
+{
+    // First load the DLL. This also resets the last_error_msg;
+    evmc_create_steppable_fn create_steppable_fn = evmc_load_steppable(filename, error_code);
+
+    if (!create_steppable_fn)
+        return NULL;
+
+    enum evmc_loader_error_code ec = EVMC_LOADER_SUCCESS;
+
+    struct evmc_vm_steppable* steppable_vm = create_steppable_fn();
+
+    if (!steppable_vm)
+    {
+        ec = set_error(EVMC_LOADER_VM_CREATION_FAILURE,
+                       "creating EVMC steppable VM of %s has failed", filename);
+        goto exit;
+    }
+
+    if (!evmc_is_abi_compatible(steppable_vm->vm))
+    {
+        ec = set_error(EVMC_LOADER_ABI_VERSION_MISMATCH,
+                       "EVMC ABI version %d of %s mismatches the expected version %d",
+                       steppable_vm->vm->abi_version, filename, EVMC_ABI_VERSION);
+        evmc_destroy_steppable(steppable_vm);
+        steppable_vm = NULL;
+        goto exit;
+    }
+
+exit:
+    if (error_code)
+        *error_code = ec;
+
+    return steppable_vm;
 }

@@ -396,6 +396,31 @@ enum evmc_status_code
     EVMC_OUT_OF_MEMORY = -3
 };
 
+/**
+ * The step status code.
+ *
+ * This represents a high-level summary of the execution status.
+ * In case of ::EVMC_STEP_FAILED a more detailed status code is provided by
+ * the ::evmc_step_result::status_code field.
+ */
+enum evmc_step_status_code
+{
+    /** Execution is still in progress. */
+    EVMC_STEP_RUNNING = 0,
+
+    /** Execution has halted successfully. */
+    EVMC_STEP_STOPPED = 1,
+
+    /** Execution has finished successfully. */
+    EVMC_STEP_RETURNED = 2,
+
+    /** Execution terminated with REVERT opcode. */
+    EVMC_STEP_REVERTED = 3,
+
+    /** Execution failed (for any reason). */
+    EVMC_STEP_FAILED = 4
+};
+
 /* Forward declaration. */
 struct evmc_result;
 
@@ -1206,6 +1231,224 @@ struct evmc_vm
      * If the VM does not support this feature the pointer can be NULL.
      */
     evmc_set_option_fn set_option;
+};
+
+/* Forward declaration. */
+struct evmc_step_result;
+
+/**
+ * Releases resources assigned to a stepping result.
+ *
+ * This function releases memory (and other resources, if any) assigned to the
+ * specified stepping result making the result object invalid.
+ *
+ * @param result  The stepping result which resources are to be released. The
+ *                result itself it not modified by this function, but becomes
+ *                invalid and user MUST discard it as well.
+ *                This MUST NOT be NULL.
+ *
+ * @note
+ * The result is passed by pointer to avoid (shallow) copy of the ::evmc_step_result
+ * struct. Think of this as the best possible C language approximation to
+ * passing objects by reference.
+ */
+typedef void (*evmc_release_step_result_fn)(const struct evmc_step_result* result);
+
+/** The EVM stepping result. */
+struct evmc_step_result
+{
+    /** The status code of the step. */
+    enum evmc_step_status_code step_status_code;
+
+    /** The execution status code.
+     *
+     * Not all states that the VM can be in can be represented by this field.
+     * Specifically if the VM is still running, or if the VM has returned.
+     * Those cases are represented by ::EVMC_STEP_RUNNING and ::EVMC_STEP_RETURNED in the
+     * evmc_step_result::step_status_code field.
+     */
+    enum evmc_status_code status_code;
+
+    /** The revision of the EVM specification used for the execution. */
+    enum evmc_revision revision;
+
+    /** The program counter after the execution. */
+    uint64_t pc;
+
+    /**
+     * The amount of gas left after the execution.
+     *
+     * If evmc_step_result::status_code is neither ::EVMC_SUCCESS nor ::EVMC_REVERT
+     * the value MUST be 0.
+     */
+    int64_t gas_left;
+
+    /**
+     * The refunded gas accumulated from this execution and its sub-calls.
+     *
+     * The transaction gas refund limit is not applied.
+     * If evmc_step_result::status_code is other than ::EVMC_SUCCESS the value MUST be 0.
+     */
+    int64_t gas_refund;
+
+    /**
+     * The reference to output data.
+     *
+     * The output contains data coming from RETURN opcode (iff evmc_step_result::status_code
+     * field is ::EVMC_SUCCESS) or from REVERT opcode.
+     *
+     * The memory containing the output data is owned by EVM and has to be
+     * freed with evmc_step_result::release().
+     *
+     * This pointer MAY be NULL.
+     * If evmc_step_result::output_size is 0 this pointer MUST NOT be dereferenced.
+     */
+    const uint8_t* output_data;
+
+    /**
+     * The size of the output data.
+     *
+     * If evmc_step_result::output_data is NULL this MUST be 0.
+     */
+    size_t output_size;
+
+    /** The stack after the execution. */
+    const evmc_uint256be* stack;
+
+    /** The number of items on the stack. */
+    size_t stack_size;
+
+    /** The memory after the execution. */
+    const uint8_t* memory;
+
+    /** The size of the memory. */
+    size_t memory_size;
+
+    /**
+     * A buffer containing the output of the last recursive EVM call.
+     *
+     * The output contains data coming from CALL and CREATE instructions.
+     *
+     * The memory containing the output data is owned by EVM and has to be
+     * freed with evmc_step_result::release().
+     *
+     * This pointer MAY be NULL.
+     */
+    const uint8_t* last_call_return_data;
+
+    /**
+     * The size of the data returned by the last call.
+     *
+     * If evmc_step_result::last_call_return_data is NULL this MUST be 0.
+     */
+    size_t last_call_return_data_size;
+
+    /**
+     * The method releasing all resources associated with the step result object.
+     *
+     * This method (function pointer) is optional (MAY be NULL) and MAY be set
+     * by the VM implementation. If set it MUST be called by the user once to
+     * release memory and other resources associated with the result object.
+     * Once the resources are released the result object MUST NOT be used again.
+     *
+     * The suggested code pattern for releasing step results:
+     * @code
+     * struct evmc_step_result result = ...;
+     * if (result.release)
+     *     result.release(&result);
+     * @endcode
+     *
+     * @note
+     * It works similarly to C++ virtual destructor. Attaching the release
+     * function to the result itself allows VM composition.
+     */
+    evmc_release_step_result_fn release;
+};
+
+/* Forward declaration. */
+struct evmc_vm_steppable;
+
+/**
+ * Executes the given code using the input from the message for N steps.
+ *
+ * This function MAY be invoked multiple times for a single VM instance.
+ *
+ * @param vm          The VM instance. This argument MUST NOT be NULL.
+ * @param host        The Host interface. This argument MUST NOT be NULL unless
+ *                    the @p vm has the ::EVMC_CAPABILITY_PRECOMPILES capability.
+ * @param context     The opaque pointer to the Host execution context.
+ *                    This argument MAY be NULL. The VM MUST pass the same
+ *                    pointer to the methods of the @p host interface.
+ *                    The VM MUST NOT dereference the pointer.
+ * @param rev         The requested EVM specification revision.
+ * @param msg         The call parameters. See ::evmc_message. This argument MUST NOT be NULL.
+ * @param code        The reference to the code to be executed. This argument MAY be NULL.
+ * @param code_size   The length of the code. If @p code is NULL this argument MUST be 0.
+ * @param status      The status code of the step.
+ * @param pc          The program counter.
+ * @param gas_refunds The amount of gas to be refunded.
+ * @param stack       The stack used for execution.
+ * @param stack_size  The number of items on the stack.
+ * @param memory      The memory used for execution.
+ * @param memory_size The size of the memory.
+ * @param steps       The number of steps to execute.
+ * @param last_call_result_data The reference to output data.
+ * @param last_call_result_data_size  The size of output data.
+ * @return            The step result.
+ */
+typedef struct evmc_step_result (*evmc_step_n_fn)(struct evmc_vm_steppable* vm,
+                                                  const struct evmc_host_interface* host,
+                                                  struct evmc_host_context* context,
+                                                  enum evmc_revision rev,
+                                                  const struct evmc_message* msg,
+                                                  uint8_t const* code,
+                                                  size_t code_size,
+                                                  enum evmc_step_status_code status,
+                                                  uint64_t pc,
+                                                  int64_t gas_refunds,
+                                                  evmc_uint256be* stack,
+                                                  size_t stack_size,
+                                                  uint8_t* memory,
+                                                  size_t memory_size,
+                                                  uint8_t* last_call_result_data,
+                                                  size_t last_call_result_data_size,
+                                                  int32_t steps);
+
+/**
+ * Destroys the VM instance.
+ *
+ * @param vm  The VM instance to be destroyed.
+ */
+typedef void (*evmc_destroy_steppable_fn)(struct evmc_vm_steppable* vm);
+
+
+/**
+ * The testable VM instance.
+ *
+ * Defines the base struct of the testable VM implementation.
+ */
+struct evmc_vm_steppable
+{
+    /**
+     * EVMC VM instance.
+     *
+     * The base struct of the VM implementation.
+     */
+    struct evmc_vm* vm;
+
+    /**
+     * Pointer to function executing a code by the VM instance for N steps.
+     *
+     * This is a mandatory method and MUST NOT be set to NULL.
+     */
+    evmc_step_n_fn step_n;
+
+    /**
+     * Pointer to function destroying the VM instance.
+     *
+     * This is a mandatory method and MUST NOT be set to NULL.
+     */
+    evmc_destroy_steppable_fn destroy;
 };
 
 /* END Python CFFI declarations */

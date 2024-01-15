@@ -309,6 +309,57 @@ static inline const char* evmc_revision_to_string(enum evmc_revision rev)
     return "<unknown>";
 }
 
+/**
+ * Releases the resources allocated to the step result.
+ *
+ * @param result  The result object to be released. MUST NOT be NULL.
+ *
+ * @see evmc_step_result::release() evmc_release_step_result_fn
+ */
+static inline void evmc_release_step_result(struct evmc_step_result* result)
+{
+    if (result->release)
+        result->release(result);
+}
+
+/**
+ * Destroys the VM instance.
+ *
+ * @see evmc_destroy_fn
+ */
+static inline void evmc_destroy_steppable(struct evmc_vm_steppable* vm)
+{
+    vm->destroy(vm);
+}
+
+/**
+ * Steps N steps through the code in the VM instance.
+ *
+ * @see evmc_step_n_fn.
+ */
+static inline struct evmc_step_result evmc_step_n(struct evmc_vm_steppable* vm,
+                                                  const struct evmc_host_interface* host,
+                                                  struct evmc_host_context* context,
+                                                  enum evmc_revision rev,
+                                                  const struct evmc_message* msg,
+                                                  uint8_t const* code,
+                                                  size_t code_size,
+                                                  enum evmc_step_status_code status,
+                                                  uint64_t pc,
+                                                  int64_t gas_refunds,
+                                                  evmc_uint256be* stack,
+                                                  size_t stack_size,
+                                                  uint8_t* memory,
+                                                  size_t memory_size,
+                                                  uint8_t* last_call_result_data,
+                                                  size_t last_call_result_data_size,
+                                                  int32_t steps)
+{
+    return vm->step_n(vm, host, context, rev, msg, code, code_size, status, pc,
+                      gas_refunds, stack, stack_size, memory, memory_size, last_call_result_data,
+                      last_call_result_data_size, steps);
+}
+
 /** @} */
 
 #ifdef __cplusplus

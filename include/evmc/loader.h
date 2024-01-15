@@ -20,6 +20,9 @@ extern "C" {
 /** The function pointer type for EVMC create functions. */
 typedef struct evmc_vm* (*evmc_create_fn)(void);
 
+/** The function pointer type for EVMC create_steppable functions. */
+typedef struct evmc_vm_steppable* (*evmc_create_steppable_fn)(void);
+
 /// Error codes for the EVMC loader.
 ///
 /// Objects of this type SHOULD be initialized with ::EVMC_LOADER_UNSPECIFIED_ERROR
@@ -168,6 +171,73 @@ struct evmc_vm* evmc_load_and_configure(const char* config,
  *         The returned pointer MUST NOT be freed by the caller.
  */
 const char* evmc_last_error_msg(void);
+
+
+/**
+ * Dynamically loads the EVMC module with a steppable VM implementation.
+ *
+ * This function tries to open a dynamically loaded library (DLL) at the given `filename`.
+ * On UNIX-like systems dlopen() function is used. On Windows LoadLibrary() function is used.
+ *
+ * If the file does not exist or is not a valid shared library the ::EVMC_LOADER_CANNOT_OPEN error
+ * code is signaled and NULL is returned.
+ *
+ * After the DLL is successfully loaded the function tries to find the EVM create test function in
+ * the library. The `filename` is used to guess the EVM name and the name of the create test
+ * function. The create test function name is constructed by the following rules. Consider example
+ * path:
+ * "/ethereum/libexample-interpreter.so.1.0".
+ * - the filename is taken from the path:
+ *   "libexample-interpreter.so.1.0",
+ * - the "lib" prefix and all file extensions are stripped from the name:
+ *   "example-interpreter"
+ * - all "-" are replaced with "_" to construct _base name_:
+ *   "example_interpreter",
+ * - the function name "evmc_create_test_" + _base name_ is searched in the library:
+ *   "evmc_create_test_example_interpreter",
+ * - if the function is not found, the function name "evmc_create_test" is searched in the library.
+ *
+ * If the create test function is found in the library, the pointer to the function is returned.
+ * Otherwise, the ::EVMC_LOADER_SYMBOL_NOT_FOUND error code is signaled and NULL is returned.
+ *
+ * It is safe to call this function with the same filename argument multiple times
+ * (the DLL is not going to be loaded multiple times).
+ *
+ * @param filename    The null terminated path (absolute or relative) to an EVMC module
+ *                    (dynamically loaded library) containing the VM implementation.
+ *                    If the value is NULL, an empty C-string or longer than the path maximum length
+ *                    the ::EVMC_LOADER_INVALID_ARGUMENT is signaled.
+ * @param error_code  The pointer to the error code. If not NULL the value is set to
+ *                    ::EVMC_LOADER_SUCCESS on success or any other error code as described above.
+ * @return            The pointer to the EVM create test function or NULL in case of error.
+ */
+evmc_create_steppable_fn evmc_load_steppable(const char* filename,
+                                             enum evmc_loader_error_code* error_code);
+
+/**
+ * Dynamically loads the EVMC module and creates the steppable VM instance.
+ *
+ * This is a macro for creating the VM instance with the function returned from
+ * evmc_load_steppable(). The function signals the same errors as evmc_load_steppable() and
+ * additionally:
+ * - ::EVMC_LOADER_VM_CREATION_FAILURE when the create function returns NULL,
+ * - ::EVMC_LOADER_ABI_VERSION_MISMATCH when the created VM instance has ABI version different
+ *   from the ABI version of this library (::EVMC_ABI_VERSION).
+ *
+ * It is safe to call this function with the same filename argument multiple times:
+ * the DLL is not going to be loaded multiple times, but the function will return new VM instance
+ * each time.
+ *
+ * @param filename    The null terminated path (absolute or relative) to an EVMC module
+ *                    (dynamically loaded library) containing the VM implementation.
+ *                    If the value is NULL, an empty C-string or longer than the path maximum length
+ *                    the ::EVMC_LOADER_INVALID_ARGUMENT is signaled.
+ * @param error_code  The pointer to the error code. If not NULL the value is set to
+ *                    ::EVMC_LOADER_SUCCESS on success or any other error code as described above.
+ * @return            The pointer to the created VM or NULL in case of error.
+ */
+struct evmc_vm_steppable* evmc_load_and_create_steppable(const char* filename,
+                                                         enum evmc_loader_error_code* error_code);
 
 #ifdef __cplusplus
 }

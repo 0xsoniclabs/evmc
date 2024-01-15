@@ -52,6 +52,46 @@ static struct evmc_result execute_wrapper(struct evmc_vm* vm,
 	struct evmc_host_context* context = (struct evmc_host_context*)context_index;
 	return evmc_execute(vm, &evmc_go_host, context, rev, &msg, code, code_size);
 }
+
+static struct evmc_step_result step_n_wrapper(struct evmc_vm_steppable* vm,
+                                              uintptr_t context_index,
+                                              enum evmc_revision rev,
+                                              enum evmc_call_kind kind,
+                                              uint32_t flags,
+                                              int32_t depth,
+                                              int64_t gas,
+                                              const evmc_address* recipient,
+                                              const evmc_address* sender,
+                                              const uint8_t* input_data,
+                                              size_t input_size,
+                                              const evmc_uint256be* value,
+                                              const evmc_bytes32* code_hash,
+                                              const uint8_t* code,
+                                              size_t code_size,
+                                              enum evmc_step_status_code status,
+                                              uint64_t pc,
+                                              int64_t gas_refunds,
+                                              evmc_uint256be* stack,
+                                              size_t stack_size,
+                                              uint8_t* memory,
+                                              size_t memory_size,
+                                              uint8_t* last_call_return_data ,
+                                              size_t last_call_return_data_size,
+                                              int32_t steps)
+{
+    struct evmc_message msg = {
+        kind,    flags,      depth,      gas,    *recipient,
+        *sender, input_data, input_size, *value, {{0}},  // create2_salt: not required for execution
+        {{0}},                                           // code_address: not required for execution
+        0,                                               // code
+        0,                                               // code_size
+        code_hash,
+    };
+
+    struct evmc_host_context* context = (struct evmc_host_context*)context_index;
+    return evmc_step_n(vm, &evmc_go_host, context, rev, &msg, code, code_size, status,
+                       pc, gas_refunds, stack, stack_size, memory, memory_size, last_call_return_data, last_call_return_data_size, steps);
+}
 */
 import "C"
 
@@ -142,6 +182,30 @@ func Load(filename string) (vm *VM, err error) {
 	return vm, err
 }
 
+type VMSteppable struct {
+	handle *C.struct_evmc_vm_steppable
+}
+
+func LoadSteppable(filename string) (vm *VMSteppable, err error) {
+	cfilename := C.CString(filename)
+	loaderErr := C.enum_evmc_loader_error_code(C.EVMC_LOADER_UNSPECIFIED_ERROR)
+	handle := C.evmc_load_and_create_steppable(cfilename, &loaderErr)
+	C.free(unsafe.Pointer(cfilename))
+
+	if loaderErr == C.EVMC_LOADER_SUCCESS {
+		vm = &VMSteppable{handle}
+	} else {
+		errMsg := C.evmc_last_error_msg()
+		if errMsg != nil {
+			err = fmt.Errorf("EVMC loading error: %s", C.GoString(errMsg))
+		} else {
+			err = fmt.Errorf("EVMC loading error %d", int(loaderErr))
+		}
+	}
+
+	return vm, err
+}
+
 func LoadAndConfigure(config string) (vm *VM, err error) {
 	cconfig := C.CString(config)
 	loaderErr := C.enum_evmc_loader_error_code(C.EVMC_LOADER_UNSPECIFIED_ERROR)
@@ -204,6 +268,14 @@ func (vm *VM) GetHandle() unsafe.Pointer {
 	return unsafe.Pointer(vm.handle)
 }
 
+func (vm *VMSteppable) GetHandle() unsafe.Pointer {
+	return unsafe.Pointer(vm.handle)
+}
+
+func (vm *VMSteppable) GetBaseHandle() unsafe.Pointer {
+	return unsafe.Pointer(vm.handle.vm)
+}
+
 type Result struct {
 	Output    []byte
 	GasLeft   int64
@@ -250,6 +322,125 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 
 	if result.release != nil {
 		C.evmc_release_result(&result)
+	}
+
+	return res, err
+}
+
+type StepStatus int32
+
+const (
+	Running  = StepStatus(C.EVMC_STEP_RUNNING)
+	Stopped  = StepStatus(C.EVMC_STEP_STOPPED)
+	Returned = StepStatus(C.EVMC_STEP_RETURNED)
+	Reverted = StepStatus(C.EVMC_STEP_REVERTED)
+	Failed   = StepStatus(C.EVMC_STEP_FAILED)
+)
+
+type StepParameters struct {
+	Context        HostContext
+	Revision       Revision
+	Kind           CallKind
+	Static         bool
+	Depth          int
+	Gas            int64
+	GasRefund      int64
+	Recipient      Address
+	Sender         Address
+	Input          []byte
+	LastCallResult []byte
+	Value          Hash
+	CodeHash       *Hash
+	Code           []byte
+	StepStatusCode StepStatus
+	Pc             uint64
+	Stack          []byte
+	Memory         []byte
+	NumSteps       int
+}
+
+type StepResult struct {
+	StepStatusCode     StepStatus
+	StatusCode         Error
+	Revision           Revision
+	Pc                 uint64
+	GasLeft            int64
+	GasRefund          int64
+	Output             []byte
+	Stack              []byte
+	Memory             []byte
+	LastCallReturnData []byte
+}
+
+func (vm *VMSteppable) StepN(params StepParameters) (res StepResult, err error) {
+	flags := C.uint32_t(0)
+	if params.Static {
+		flags |= C.EVMC_STATIC
+	}
+
+	ctxId := addHostContext(params.Context)
+	// FIXME: Clarify passing by pointer vs passing by value.
+	evmcRecipient := evmcAddress(params.Recipient)
+	evmcSender := evmcAddress(params.Sender)
+	evmcValue := evmcBytes32(params.Value)
+
+	var codeHash *C.evmc_bytes32
+	if params.CodeHash != nil {
+		hash := evmcBytes32(*params.CodeHash)
+		codeHash = &hash
+	}
+
+	stack := (*C.evmc_uint256be)(nil)
+	if len(params.Stack) > 0 {
+		stack = (*C.evmc_uint256be)(unsafe.Pointer(&params.Stack[0]))
+	}
+
+	memory := (*C.uint8_t)(nil)
+	if len(params.Memory) > 0 {
+		memory = (*C.uint8_t)(unsafe.Pointer(&params.Memory[0]))
+	}
+
+	result := C.step_n_wrapper(vm.handle,
+		C.uintptr_t(ctxId),
+		uint32(params.Revision),
+		C.enum_evmc_call_kind(params.Kind),
+		flags,
+		C.int32_t(params.Depth),
+		C.int64_t(params.Gas),
+		&evmcRecipient,
+		&evmcSender,
+		bytesPtr(params.Input),
+		C.size_t(len(params.Input)),
+		&evmcValue,
+		codeHash,
+		bytesPtr(params.Code),
+		C.size_t(len(params.Code)),
+		C.enum_evmc_step_status_code(params.StepStatusCode),
+		C.uint64_t(params.Pc),
+		C.int64_t(params.GasRefund),
+		stack,
+		C.size_t(len(params.Stack)/32),
+		memory,
+		C.size_t(len(params.Memory)),
+		bytesPtr(params.LastCallResult),
+		C.size_t(len(params.LastCallResult)),
+		C.int32_t(params.NumSteps))
+
+	removeHostContext(ctxId)
+
+	res.StepStatusCode = StepStatus(result.step_status_code)
+	res.StatusCode = Error(result.status_code)
+	res.Revision = Revision(result.revision)
+	res.Pc = uint64(result.pc)
+	res.GasLeft = int64(result.gas_left)
+	res.GasRefund = int64(result.gas_refund)
+	res.Output = C.GoBytes(unsafe.Pointer(result.output_data), C.int(result.output_size))
+	res.Stack = C.GoBytes(unsafe.Pointer(result.stack), C.int(result.stack_size*32))
+	res.Memory = C.GoBytes(unsafe.Pointer(result.memory), C.int(result.memory_size))
+	res.LastCallReturnData = C.GoBytes(unsafe.Pointer(result.last_call_return_data), C.int(result.last_call_return_data_size))
+
+	if result.release != nil {
+		C.evmc_release_step_result(&result)
 	}
 
 	return res, err
