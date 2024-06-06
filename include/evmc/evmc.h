@@ -200,6 +200,11 @@ struct evmc_message
      * The length of the code to be executed.
      */
     size_t code_size;
+
+    /**
+     * Optional: the hash of the code to be executed.
+     */
+    const evmc_bytes32* code_hash;
 };
 
 /** The hashed initcode used for TXCREATE instruction. */

@@ -30,7 +30,7 @@ static struct evmc_result execute_wrapper(struct evmc_vm* vm,
 	enum evmc_call_kind kind, uint32_t flags, int32_t depth, int64_t gas,
 	const evmc_address* recipient, const evmc_address* sender,
 	const uint8_t* input_data, size_t input_size, const evmc_uint256be* value,
-	const uint8_t* code, size_t code_size)
+	const evmc_bytes32* code_hash, const uint8_t* code, size_t code_size)
 {
 	struct evmc_message msg = {
 		kind,
@@ -46,6 +46,7 @@ static struct evmc_result execute_wrapper(struct evmc_vm* vm,
 		{{0}}, // code_address: not required for execution
 		0,     // code
 		0,     // code_size
+		code_hash,
 	};
 
 	struct evmc_host_context* context = (struct evmc_host_context*)context_index;
@@ -212,7 +213,7 @@ type Result struct {
 func (vm *VM) Execute(ctx HostContext, rev Revision,
 	kind CallKind, static bool, delegated bool, depth int, gas int64,
 	recipient Address, sender Address, input []byte, value Hash,
-	code []byte) (res Result, err error) {
+	codeHash *Hash, code []byte) (res Result, err error) {
 
 	flags := C.uint32_t(0)
 	if static {
@@ -223,6 +224,13 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 	}
 
 	ctxId := addHostContext(ctx)
+
+	var cCodeHash *C.evmc_bytes32
+	if codeHash != nil {
+		hash := evmcBytes32(*codeHash)
+		cCodeHash = &hash
+	}
+
 	// FIXME: Clarify passing by pointer vs passing by value.
 	evmcRecipient := evmcAddress(recipient)
 	evmcSender := evmcAddress(sender)
@@ -230,7 +238,7 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 	result := C.execute_wrapper(vm.handle, C.uintptr_t(ctxId), uint32(rev),
 		C.enum_evmc_call_kind(kind), flags, C.int32_t(depth), C.int64_t(gas),
 		&evmcRecipient, &evmcSender, bytesPtr(input), C.size_t(len(input)), &evmcValue,
-		bytesPtr(code), C.size_t(len(code)))
+		cCodeHash, bytesPtr(code), C.size_t(len(code)))
 	removeHostContext(ctxId)
 
 	res.Output = C.GoBytes(unsafe.Pointer(result.output_data), C.int(result.output_size))
