@@ -83,6 +83,7 @@ type TxContext struct {
 	ChainID     Hash
 	BaseFee     Hash
 	BlobBaseFee Hash
+	BlobHashes  []Hash
 }
 
 type HostContext interface {
@@ -171,9 +172,7 @@ func selfdestruct(pCtx unsafe.Pointer, pAddr *C.evmc_address, pBeneficiary *C.ev
 
 //export getTxContext
 func getTxContext(pCtx unsafe.Pointer) C.struct_evmc_tx_context {
-	ctx := getHostContext(uintptr(pCtx))
-
-	txContext := ctx.GetTxContext()
+	txContext := getHostContext(uintptr(pCtx)).GetTxContext()
 
 	return C.struct_evmc_tx_context{
 		evmcBytes32(txContext.GasPrice),
@@ -186,8 +185,8 @@ func getTxContext(pCtx unsafe.Pointer) C.struct_evmc_tx_context {
 		evmcBytes32(txContext.ChainID),
 		evmcBytes32(txContext.BaseFee),
 		evmcBytes32(txContext.BlobBaseFee),
-		nil, // TODO: Add support for blob hashes.
-		0,
+		evmcBytes32_ptr(txContext.BlobHashes),
+		C.size_t(len(txContext.BlobHashes)),
 		nil, // TODO: Add support for transaction initcodes.
 		0,
 	}
@@ -262,4 +261,11 @@ func getTransientStorage(pCtx unsafe.Pointer, pAddr *C.struct_evmc_address, pKey
 func setTransientStorage(pCtx unsafe.Pointer, pAddr *C.evmc_address, pKey *C.evmc_bytes32, pVal *C.evmc_bytes32) {
 	ctx := getHostContext(uintptr(pCtx))
 	ctx.SetTransientStorage(goAddress(*pAddr), goHash(*pKey), goHash(*pVal))
+}
+
+func evmcBytes32_ptr(in []Hash) *C.evmc_bytes32 {
+	if len(in) == 0 {
+		return nil
+	}
+	return (*C.evmc_bytes32)(unsafe.Pointer(&in[0]))
 }

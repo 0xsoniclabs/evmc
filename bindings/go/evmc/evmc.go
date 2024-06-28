@@ -90,13 +90,16 @@ static struct evmc_step_result step_n_wrapper(struct evmc_vm_steppable* vm,
 
     struct evmc_host_context* context = (struct evmc_host_context*)context_index;
     return evmc_step_n(vm, &evmc_go_host, context, rev, &msg, code, code_size, status,
-                       pc, gas_refunds, stack, stack_size, memory, memory_size, last_call_return_data, last_call_return_data_size, steps);
+                       pc, gas_refunds, stack, stack_size, memory, memory_size,
+					   last_call_return_data, last_call_return_data_size,
+					   steps);
 }
 */
 import "C"
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -303,6 +306,13 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 		cCodeHash = &hash
 	}
 
+	txBlobHashes := ctx.GetTxContext().BlobHashes
+	if len(txBlobHashes) > 0 {
+		pnr := new(runtime.Pinner)
+		pnr.Pin(&txBlobHashes[0])
+		defer pnr.Unpin()
+	}
+
 	// FIXME: Clarify passing by pointer vs passing by value.
 	evmcRecipient := evmcAddress(recipient)
 	evmcSender := evmcAddress(sender)
@@ -388,6 +398,13 @@ func (vm *VMSteppable) StepN(params StepParameters) (res StepResult, err error) 
 	if params.CodeHash != nil {
 		hash := evmcBytes32(*params.CodeHash)
 		codeHash = &hash
+	}
+
+	txBlobhashes := params.Context.GetTxContext().BlobHashes
+	if len(txBlobhashes) > 0 {
+		pnr := new(runtime.Pinner)
+		pnr.Pin(&txBlobhashes[0])
+		defer pnr.Unpin()
 	}
 
 	stack := (*C.evmc_uint256be)(nil)
