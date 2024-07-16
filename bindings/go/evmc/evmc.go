@@ -279,6 +279,10 @@ func (vm *VMSteppable) GetBaseHandle() unsafe.Pointer {
 	return unsafe.Pointer(vm.handle.vm)
 }
 
+func (vm *VMSteppable) Destroy() {
+	C.evmc_destroy(vm.handle.vm)
+}
+
 type Result struct {
 	Output    []byte
 	GasLeft   int64
