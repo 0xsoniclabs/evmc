@@ -27,6 +27,12 @@ impl Default for evmc_bytes32 {
     }
 }
 
+impl PartialOrd for evmc_revision {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        (*self as u32).partial_cmp(&(*other as u32))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::mem::size_of;
