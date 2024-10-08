@@ -97,6 +97,7 @@ pub struct ExecutionMessage {
     create2_salt: Bytes32,
     code_address: Address,
     code: Option<Vec<u8>>,
+    code_hash: Option<Uint256>,
 }
 
 /// EVMC transaction context structure.
@@ -250,6 +251,7 @@ impl ExecutionMessage {
         create2_salt: Bytes32,
         code_address: Address,
         code: Option<&[u8]>,
+        code_hash: Option<Uint256>,
     ) -> Self {
         ExecutionMessage {
             kind,
@@ -263,6 +265,7 @@ impl ExecutionMessage {
             create2_salt,
             code_address,
             code: code.map(|s| s.to_vec()),
+            code_hash,
         }
     }
 
@@ -319,6 +322,11 @@ impl ExecutionMessage {
     /// Read the optional init code.
     pub fn code(&self) -> Option<&Vec<u8>> {
         self.code.as_ref()
+    }
+
+    /// Read the optional code hash.
+    pub fn code_hash(&self) -> Option<&Bytes32> {
+        self.code_hash.as_ref()
     }
 }
 
@@ -730,6 +738,11 @@ impl From<&ffi::evmc_message> for ExecutionMessage {
             } else {
                 Some(from_buf_raw::<u8>(message.code, message.code_size))
             },
+            code_hash: if message.code_hash.is_null() {
+                None
+            } else {
+                Some(unsafe { *message.code_hash })
+            },
         }
     }
 }
@@ -911,6 +924,7 @@ mod tests {
             create2_salt,
             code_address,
             None,
+            None,
         );
 
         assert_eq!(ret.kind(), MessageKind::EVMC_CALL);
@@ -947,6 +961,7 @@ mod tests {
             create2_salt,
             code_address,
             Some(&code),
+            None,
         );
 
         assert_eq!(ret.kind(), MessageKind::EVMC_CALL);
@@ -1214,6 +1229,7 @@ mod tests {
             Bytes32::default(),
             test_addr,
             None,
+            None,
         );
 
         let b = exe_context.call(&message);
@@ -1246,6 +1262,7 @@ mod tests {
             Uint256::default(),
             Bytes32::default(),
             test_addr,
+            None,
             None,
         );
 
