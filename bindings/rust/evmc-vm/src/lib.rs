@@ -103,14 +103,40 @@ pub struct ExecutionMessage<'a> {
 }
 
 /// EVMC transaction context structure.
-pub type ExecutionTxContext = ffi::evmc_tx_context;
+#[derive(Debug, Copy, Clone, Hash, PartialEq)]
+pub struct ExecutionTxContext<'a> {
+    #[doc = "The transaction gas price."]
+    pub tx_gas_price: Bytes32,
+    #[doc = "The transaction origin account."]
+    pub tx_origin: Address,
+    #[doc = "The miner of the block."]
+    pub block_coinbase: Address,
+    #[doc = "The block number."]
+    pub block_number: i64,
+    #[doc = "The block timestamp."]
+    pub block_timestamp: i64,
+    #[doc = "The block gas limit."]
+    pub block_gas_limit: i64,
+    #[doc = "The block previous RANDAO (EIP-4399)."]
+    pub block_prev_randao: Bytes32,
+    #[doc = "The blockchain's ChainID."]
+    pub chain_id: Bytes32,
+    #[doc = "The block base fee per gas (EIP-1559, EIP-3198)."]
+    pub block_base_fee: Bytes32,
+    #[doc = "The blob base fee (EIP-7516)."]
+    pub blob_base_fee: Bytes32,
+    #[doc = "The array of blob hashes (EIP-4844)."]
+    pub blob_hashes: &'a [Bytes32],
+    #[doc = "The array of transaction initcodes (TXCREATE)."]
+    pub initcodes: &'a [ffi::evmc_tx_initcode],
+}
 
 /// EVMC context structure. Exposes the EVMC host functions, message data, and transaction context
 /// to the executing VM.
 pub struct ExecutionContext<'a> {
     host: &'a ffi::evmc_host_interface,
     context: *mut ffi::evmc_host_context,
-    tx_context: ExecutionTxContext,
+    tx_context: ExecutionTxContext<'a>,
 }
 
 impl ExecutionResult {
@@ -342,7 +368,7 @@ impl<'a> ExecutionContext<'a> {
         ExecutionContext {
             host,
             context: _context,
-            tx_context: _tx_context,
+            tx_context: _tx_context.into(),
         }
     }
 
@@ -818,6 +844,37 @@ impl<'a> From<&'a ffi::evmc_message> for ExecutionMessage<'a> {
             } else {
                 Some(unsafe { *message.code_hash })
             },
+        }
+    }
+}
+
+impl<'a> From<ffi::evmc_tx_context> for ExecutionTxContext<'a> {
+    fn from(message: ffi::evmc_tx_context) -> Self {
+        let blob_hashes = if message.blob_hashes.is_null() {
+            &[]
+        } else {
+            assert_ne!(message.blob_hashes_count, 0);
+            unsafe { slice::from_raw_parts(message.blob_hashes, message.blob_hashes_count) }
+        };
+        let initcodes = if message.initcodes.is_null() {
+            &[]
+        } else {
+            assert_ne!(message.initcodes_count, 0);
+            unsafe { slice::from_raw_parts(message.initcodes, message.initcodes_count) }
+        };
+        ExecutionTxContext {
+            tx_gas_price: message.tx_gas_price,
+            tx_origin: message.tx_origin,
+            block_coinbase: message.block_coinbase,
+            block_number: message.block_number,
+            block_timestamp: message.block_timestamp,
+            block_gas_limit: message.block_gas_limit,
+            block_prev_randao: message.block_prev_randao,
+            chain_id: message.chain_id,
+            block_base_fee: message.block_base_fee,
+            blob_base_fee: message.blob_base_fee,
+            blob_hashes,
+            initcodes,
         }
     }
 }
