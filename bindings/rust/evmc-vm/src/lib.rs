@@ -547,17 +547,7 @@ impl From<ffi::evmc_result> for ExecutionResult {
     }
 }
 
-unsafe fn deallocate_buffer<T>(ptr: *const T, size: usize) {
-    if !ptr.is_null() {
-        let _ = unsafe { Box::from_raw(slice::from_raw_parts_mut(ptr as *mut T, size)) };
-    }
-}
-
-fn optional_vec_into_raw<T>(output: Option<Vec<T>>) -> (*const T, usize) {
-    optional_boxed_slice_into_raw(output.map(Vec::into_boxed_slice))
-}
-
-fn optional_boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const T, usize) {
+fn boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const T, usize) {
     slice
         .map(|v| {
             let len = v.len();
@@ -566,16 +556,24 @@ fn optional_boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const T, usize
         .unwrap_or((std::ptr::null(), 0))
 }
 
+fn boxed_slice_from_raw_parts<T>(ptr: *const T, len: usize) -> Option<Box<[T]>> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { Box::<[T]>::from_raw(slice::from_raw_parts_mut(ptr as *mut T, len)) })
+    }
+}
+
 /// Returns a pointer to a stack-allocated evmc_result.
 impl From<ExecutionResult> for ffi::evmc_result {
     fn from(value: ExecutionResult) -> Self {
-        let (buffer, len) = optional_boxed_slice_into_raw(value.output);
+        let (output_data, output_size) = boxed_slice_into_raw(value.output);
         Self {
             status_code: value.status_code,
             gas_left: value.gas_left,
             gas_refund: value.gas_refund,
-            output_data: buffer,
-            output_size: len,
+            output_data,
+            output_size,
             release: Some(release_stack_result),
             create_address: value.create_address.unwrap_or_default(),
             padding: [0u8; 4],
@@ -586,11 +584,11 @@ impl From<ExecutionResult> for ffi::evmc_result {
 /// Returns a pointer to a stack-allocated evmc_step_result.
 impl From<StepResult> for ffi::evmc_step_result {
     fn from(value: StepResult) -> Self {
-        let (output_data, output_size) = optional_boxed_slice_into_raw(value.output);
-        let (stack, stack_size) = optional_vec_into_raw(Some(value.stack));
-        let (memory, memory_size) = optional_vec_into_raw(Some(value.memory));
+        let (output_data, output_size) = boxed_slice_into_raw(value.output);
+        let (stack, stack_size) = boxed_slice_into_raw(Some(value.stack.into_boxed_slice()));
+        let (memory, memory_size) = boxed_slice_into_raw(Some(value.memory.into_boxed_slice()));
         let (last_call_return_data, last_call_return_data_size) =
-            optional_vec_into_raw(value.last_call_return_data);
+            boxed_slice_into_raw(value.last_call_return_data.map(|v| v.into_boxed_slice()));
 
         Self {
             step_status_code: value.step_status_code,
@@ -688,7 +686,7 @@ impl From<ffi::evmc_step_result> for StepResult {
 extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
     unsafe {
         let tmp = *result;
-        deallocate_buffer(tmp.output_data, tmp.output_size);
+        drop(boxed_slice_from_raw_parts(tmp.output_data, tmp.output_size));
     }
 }
 
@@ -696,10 +694,13 @@ extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
 extern "C" fn release_stack_step_result(result: *const ffi::evmc_step_result) {
     unsafe {
         let tmp = *result;
-        deallocate_buffer(tmp.output_data, tmp.output_size);
-        deallocate_buffer(tmp.stack, tmp.stack_size);
-        deallocate_buffer(tmp.memory, tmp.memory_size);
-        deallocate_buffer(tmp.last_call_return_data, tmp.last_call_return_data_size);
+        drop(boxed_slice_from_raw_parts(tmp.output_data, tmp.output_size));
+        drop(boxed_slice_from_raw_parts(tmp.stack, tmp.stack_size));
+        drop(boxed_slice_from_raw_parts(tmp.memory, tmp.memory_size));
+        drop(boxed_slice_from_raw_parts(
+            tmp.last_call_return_data,
+            tmp.last_call_return_data_size,
+        ));
     }
 }
 
