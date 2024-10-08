@@ -613,33 +613,21 @@ impl From<ffi::evmc_result> for ExecutionResult {
     }
 }
 
-fn allocate_output_data<T>(output: Option<&Vec<T>>) -> (*const T, usize) {
-    if let Some(buf) = output {
-        if !buf.is_empty() {
-            let buf_len = buf.len();
-
-            // Manually allocate heap memory for the new home of the output buffer.
-            let memlayout =
-                std::alloc::Layout::from_size_align(buf_len * size_of::<T>(), align_of::<T>())
-                    .expect("Bad layout");
-            let new_buf = unsafe { std::alloc::alloc(memlayout) as *mut T };
-            unsafe {
-                // Copy the data into the allocated buffer.
-                std::ptr::copy(buf.as_ptr(), new_buf, buf_len);
-            }
-
-            return (new_buf as *const T, buf_len);
+fn boxed_slice_into_raw<T>(v: Option<Box<[T]>>) -> (*const T, usize) {
+    match v {
+        Some(v) => {
+            let slice = Box::into_raw(v);
+            (slice as *const T, slice.len())
         }
+        None => (std::ptr::null(), 0),
     }
-    (std::ptr::null(), 0)
 }
 
-unsafe fn deallocate_output_data<T>(ptr: *const T, size: usize) {
-    if !ptr.is_null() {
-        let buf_layout =
-            std::alloc::Layout::from_size_align(size * size_of::<T>(), align_of::<T>())
-                .expect("Bad layout");
-        std::alloc::dealloc(ptr as *mut u8, buf_layout);
+fn boxed_slice_from_raw_parts<T>(ptr: *const T, len: usize) -> Option<Box<[T]>> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { Box::<[T]>::from_raw(slice::from_raw_parts_mut(ptr as *mut T, len)) })
     }
 }
 
@@ -656,25 +644,20 @@ impl From<ExecutionResult> for *const ffi::evmc_result {
 extern "C" fn release_heap_result(result: *const ffi::evmc_result) {
     unsafe {
         let tmp = Box::from_raw(result as *mut ffi::evmc_result);
-        deallocate_output_data(tmp.output_data, tmp.output_size);
+        drop(boxed_slice_from_raw_parts(tmp.output_data, tmp.output_size));
     }
 }
 
 /// Returns a pointer to a stack-allocated evmc_result.
 impl From<ExecutionResult> for ffi::evmc_result {
     fn from(value: ExecutionResult) -> Self {
-        let (buffer, len) = if let Some(buf) = value.output {
-            let len = buf.len();
-            (Box::<[u8]>::into_raw(buf) as *const u8, len)
-        } else {
-            (std::ptr::null(), 0)
-        };
+        let (output_data, output_size) = boxed_slice_into_raw(value.output);
         Self {
             status_code: value.status_code,
             gas_left: value.gas_left,
             gas_refund: value.gas_refund,
-            output_data: buffer,
-            output_size: len,
+            output_data,
+            output_size,
             release: Some(release_stack_result),
             create_address: if value.create_address.is_some() {
                 value.create_address.unwrap()
@@ -689,16 +672,11 @@ impl From<ExecutionResult> for ffi::evmc_result {
 /// Returns a pointer to a stack-allocated evmc_step_result.
 impl From<StepResult> for ffi::evmc_step_result {
     fn from(value: StepResult) -> Self {
-        let (output_data, output_size) = if let Some(buf) = value.output {
-            let len = buf.len();
-            (Box::<[u8]>::into_raw(buf) as *const u8, len)
-        } else {
-            (std::ptr::null(), 0)
-        };
-        let (stack, stack_size) = allocate_output_data(Some(&value.stack));
-        let (memory, memory_size) = allocate_output_data(Some(&value.memory));
+        let (output_data, output_size) = boxed_slice_into_raw(value.output);
+        let (stack, stack_size) = boxed_slice_into_raw(Some(value.stack.into_boxed_slice()));
+        let (memory, memory_size) = boxed_slice_into_raw(Some(value.memory.into_boxed_slice()));
         let (last_call_return_data, last_call_return_data_size) =
-            allocate_output_data(value.last_call_return_data.as_ref());
+            boxed_slice_into_raw(value.last_call_return_data.map(|v| v.into_boxed_slice()));
 
         Self {
             step_status_code: value.step_status_code,
@@ -796,7 +774,7 @@ impl From<ffi::evmc_step_result> for StepResult {
 extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
     unsafe {
         let tmp = *result;
-        deallocate_output_data(tmp.output_data, tmp.output_size);
+        drop(boxed_slice_from_raw_parts(tmp.output_data, tmp.output_size));
     }
 }
 
@@ -804,10 +782,13 @@ extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
 extern "C" fn release_stack_step_result(result: *const ffi::evmc_step_result) {
     unsafe {
         let tmp = *result;
-        deallocate_output_data(tmp.output_data, tmp.output_size);
-        deallocate_output_data(tmp.stack, tmp.stack_size);
-        deallocate_output_data(tmp.memory, tmp.memory_size);
-        deallocate_output_data(tmp.last_call_return_data, tmp.last_call_return_data_size);
+        drop(boxed_slice_from_raw_parts(tmp.output_data, tmp.output_size));
+        drop(boxed_slice_from_raw_parts(tmp.stack, tmp.stack_size));
+        drop(boxed_slice_from_raw_parts(tmp.memory, tmp.memory_size));
+        drop(boxed_slice_from_raw_parts(
+            tmp.last_call_return_data,
+            tmp.last_call_return_data_size,
+        ));
     }
 }
 
