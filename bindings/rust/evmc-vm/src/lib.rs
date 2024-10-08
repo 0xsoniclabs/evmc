@@ -97,21 +97,47 @@ pub struct ExecutionMessage<'a> {
     sender: Address,
     input: Option<&'a [u8]>,
     value: Uint256,
-    create2_salt: Bytes32,
+    create2_salt: Uint256,
     code_address: Address,
     code: Option<&'a [u8]>,
     code_hash: Option<Uint256>,
 }
 
 /// EVMC transaction context structure.
-pub type ExecutionTxContext = ffi::evmc_tx_context;
+#[derive(Debug, Copy, Clone, Hash, PartialEq)]
+pub struct ExecutionTxContext<'a> {
+    /// The transaction gas price
+    pub tx_gas_price: Bytes32,
+    /// The transaction origin account.
+    pub tx_origin: Address,
+    /// The miner of the block.
+    pub block_coinbase: Address,
+    /// The block number.
+    pub block_number: i64,
+    /// The block timestamp.
+    pub block_timestamp: i64,
+    /// The block gas limit.
+    pub block_gas_limit: i64,
+    /// The block previous RANDAO (EIP-4399).
+    pub block_prev_randao: Bytes32,
+    /// The blockchain's ChainID.
+    pub chain_id: Bytes32,
+    /// The block base fee per gas (EIP-1559, EIP-3198).
+    pub block_base_fee: Bytes32,
+    /// The blob base fee (EIP-7516).
+    pub blob_base_fee: Bytes32,
+    /// The array of blob hashes (EIP-4844).
+    pub blob_hashes: &'a [Bytes32],
+    /// The array of transaction initcodes (TXCREATE).
+    pub initcodes: &'a [ffi::evmc_tx_initcode],
+}
 
 /// EVMC context structure. Exposes the EVMC host functions, message data, and transaction context
 /// to the executing VM.
 pub struct ExecutionContext<'a> {
     host: &'a ffi::evmc_host_interface,
     context: *mut ffi::evmc_host_context,
-    tx_context: Option<ExecutionTxContext>,
+    tx_context: Option<ExecutionTxContext<'a>>,
 }
 
 impl ExecutionResult {
@@ -347,7 +373,7 @@ impl<'a> ExecutionContext<'a> {
         let get_tx_context = self.host.get_tx_context;
         let context = self.context;
         self.tx_context
-            .get_or_insert_with(|| unsafe { get_tx_context.unwrap()(context) })
+            .get_or_insert_with(|| unsafe { get_tx_context.unwrap()(context) }.into())
     }
 
     /// Check if an account exists.
@@ -704,6 +730,58 @@ impl<'a> From<&'a ffi::evmc_message> for ExecutionMessage<'a> {
             } else {
                 Some(unsafe { *message.code_hash })
             },
+        }
+    }
+}
+
+impl From<ffi::evmc_tx_context> for ExecutionTxContext<'_> {
+    fn from(message: ffi::evmc_tx_context) -> Self {
+        let blob_hashes = if message.blob_hashes.is_null() {
+            &[]
+        } else {
+            assert_ne!(message.blob_hashes_count, 0);
+            unsafe { slice::from_raw_parts(message.blob_hashes, message.blob_hashes_count) }
+        };
+        let initcodes = if message.initcodes.is_null() {
+            &[]
+        } else {
+            assert_ne!(message.initcodes_count, 0);
+            unsafe { slice::from_raw_parts(message.initcodes, message.initcodes_count) }
+        };
+        ExecutionTxContext {
+            tx_gas_price: message.tx_gas_price,
+            tx_origin: message.tx_origin,
+            block_coinbase: message.block_coinbase,
+            block_number: message.block_number,
+            block_timestamp: message.block_timestamp,
+            block_gas_limit: message.block_gas_limit,
+            block_prev_randao: message.block_prev_randao,
+            chain_id: message.chain_id,
+            block_base_fee: message.block_base_fee,
+            blob_base_fee: message.blob_base_fee,
+            blob_hashes,
+            initcodes,
+        }
+    }
+}
+
+impl From<ExecutionTxContext<'_>> for ffi::evmc_tx_context {
+    fn from(message: ExecutionTxContext) -> Self {
+        ffi::evmc_tx_context {
+            tx_gas_price: message.tx_gas_price,
+            tx_origin: message.tx_origin,
+            block_coinbase: message.block_coinbase,
+            block_number: message.block_number,
+            block_timestamp: message.block_timestamp,
+            block_gas_limit: message.block_gas_limit,
+            block_prev_randao: message.block_prev_randao,
+            chain_id: message.chain_id,
+            block_base_fee: message.block_base_fee,
+            blob_base_fee: message.blob_base_fee,
+            blob_hashes: message.blob_hashes.as_ptr(),
+            blob_hashes_count: message.blob_hashes.len(),
+            initcodes: message.initcodes.as_ptr(),
+            initcodes_count: message.initcodes.len(),
         }
     }
 }
