@@ -12,6 +12,8 @@
 mod container;
 mod types;
 
+use std::slice;
+
 pub use container::{EvmcContainer, SteppableEvmcContainer};
 pub use evmc_sys as ffi;
 pub use types::*;
@@ -62,25 +64,25 @@ pub enum SetOptionError {
 /// EVMC result structure.
 #[derive(Debug)]
 pub struct ExecutionResult {
-    status_code: StatusCode,
-    gas_left: i64,
-    gas_refund: i64,
-    output: Option<Vec<u8>>,
-    create_address: Option<Address>,
+    pub status_code: StatusCode,
+    pub gas_left: i64,
+    pub gas_refund: i64,
+    pub output: Option<Vec<u8>>,
+    pub create_address: Option<Address>,
 }
 
 #[derive(Debug)]
 pub struct StepResult {
-    step_status_code: StepStatusCode,
-    status_code: StatusCode,
-    revision: Revision,
-    pc: u64,
-    gas_left: i64,
-    gas_refund: i64,
-    output: Option<Vec<u8>>,
-    stack: Vec<Uint256>,
-    memory: Vec<u8>,
-    last_call_return_data: Option<Vec<u8>>,
+    pub step_status_code: StepStatusCode,
+    pub status_code: StatusCode,
+    pub revision: Revision,
+    pub pc: u64,
+    pub gas_left: i64,
+    pub gas_refund: i64,
+    pub output: Option<Vec<u8>>,
+    pub stack: Vec<Uint256>,
+    pub memory: Vec<u8>,
+    pub last_call_return_data: Option<Vec<u8>>,
 }
 
 /// EVMC execution message structure.
@@ -597,22 +599,23 @@ impl From<ffi::evmc_result> for ExecutionResult {
 
 fn allocate_output_data<T>(output: Option<&Vec<T>>) -> (*const T, usize) {
     if let Some(buf) = output {
-        let buf_len = buf.len();
+        if !buf.is_empty() {
+            let buf_len = buf.len();
 
-        // Manually allocate heap memory for the new home of the output buffer.
-        let memlayout =
-            std::alloc::Layout::from_size_align(buf_len * size_of::<T>(), align_of::<T>())
-                .expect("Bad layout");
-        let new_buf = unsafe { std::alloc::alloc(memlayout) as *mut T };
-        unsafe {
-            // Copy the data into the allocated buffer.
-            std::ptr::copy(buf.as_ptr(), new_buf, buf_len);
+            // Manually allocate heap memory for the new home of the output buffer.
+            let memlayout =
+                std::alloc::Layout::from_size_align(buf_len * size_of::<T>(), align_of::<T>())
+                    .expect("Bad layout");
+            let new_buf = unsafe { std::alloc::alloc(memlayout) as *mut T };
+            unsafe {
+                // Copy the data into the allocated buffer.
+                std::ptr::copy(buf.as_ptr(), new_buf, buf_len);
+            }
+
+            return (new_buf as *const T, buf_len);
         }
-
-        (new_buf as *const T, buf_len)
-    } else {
-        (std::ptr::null(), 0)
     }
+    (std::ptr::null(), 0)
 }
 
 unsafe fn deallocate_output_data<T>(ptr: *const T, size: usize) {
@@ -688,6 +691,78 @@ impl From<StepResult> for ffi::evmc_step_result {
             last_call_return_data_size,
             release: Some(release_stack_step_result),
         }
+    }
+}
+
+/// Converts ffi type into steppable interface result type.
+impl From<ffi::evmc_step_result> for StepResult {
+    fn from(value: ffi::evmc_step_result) -> Self {
+        let ret = Self {
+            step_status_code: value.step_status_code,
+            status_code: value.status_code,
+            revision: value.revision,
+            pc: value.pc,
+            gas_left: value.gas_left,
+            gas_refund: value.gas_refund,
+            output: if value.output_data.is_null() {
+                assert_eq!(value.output_size, 0);
+                None
+            } else if value.output_size == 0 {
+                None
+            } else {
+                Some(Vec::from(unsafe {
+                    slice::from_raw_parts(value.output_data as *mut u8, value.output_size)
+                }))
+            },
+            stack: if value.stack.is_null() {
+                assert_eq!(value.stack_size, 0);
+                Vec::new()
+            } else if value.stack_size == 0 {
+                Vec::new()
+            } else {
+                unsafe {
+                    Vec::from(slice::from_raw_parts(
+                        value.stack as *mut _,
+                        value.stack_size,
+                    ))
+                }
+            },
+            memory: if value.memory.is_null() {
+                assert_eq!(value.memory_size, 0);
+                Vec::new()
+            } else if value.memory_size == 0 {
+                Vec::new()
+            } else {
+                unsafe {
+                    Vec::from(slice::from_raw_parts(
+                        value.memory as *mut _,
+                        value.memory_size,
+                    ))
+                }
+            },
+            last_call_return_data: if value.last_call_return_data.is_null() {
+                assert_eq!(value.last_call_return_data_size, 0);
+                None
+            } else if value.last_call_return_data_size == 0 {
+                None
+            } else {
+                Some(unsafe {
+                    Vec::from(slice::from_raw_parts(
+                        value.last_call_return_data as *mut _,
+                        value.last_call_return_data_size,
+                    ))
+                })
+            },
+        };
+
+        // If release function is provided, use it to release resources.
+        if let Some(release) = value.release {
+            unsafe {
+                release(&value);
+            }
+        }
+
+        ret
     }
 }
 
