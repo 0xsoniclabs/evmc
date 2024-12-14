@@ -333,10 +333,10 @@ impl<'a> ExecutionMessage<'a> {
 }
 
 impl<'a> ExecutionContext<'a> {
-    pub fn new(host: &'a ffi::evmc_host_interface, _context: *mut ffi::evmc_host_context) -> Self {
+    pub fn new(host: &'a ffi::evmc_host_interface, context: *mut ffi::evmc_host_context) -> Self {
         ExecutionContext {
             host,
-            context: _context,
+            context,
             tx_context: None,
         }
     }
@@ -344,11 +344,7 @@ impl<'a> ExecutionContext<'a> {
     /// Retrieve the transaction context.
     pub fn get_tx_context(&mut self) -> &ExecutionTxContext {
         if self.tx_context.is_none() {
-            assert!((*self.host).get_tx_context.is_some());
-            let tx_context = unsafe {
-                assert!((*self.host).get_tx_context.is_some());
-                (*self.host).get_tx_context.unwrap()(self.context)
-            };
+            let tx_context = unsafe { (*self.host).get_tx_context.unwrap()(self.context) };
             self.tx_context = Some(tx_context);
         }
         self.tx_context.as_ref().unwrap()
@@ -356,16 +352,12 @@ impl<'a> ExecutionContext<'a> {
 
     /// Check if an account exists.
     pub fn account_exists(&self, address: &Address) -> bool {
-        unsafe {
-            assert!((*self.host).account_exists.is_some());
-            (*self.host).account_exists.unwrap()(self.context, address as *const Address)
-        }
+        unsafe { (*self.host).account_exists.unwrap()(self.context, address as *const Address) }
     }
 
     /// Read from a storage key.
     pub fn get_storage(&self, address: &Address, key: &Bytes32) -> Bytes32 {
         unsafe {
-            assert!((*self.host).get_storage.is_some());
             (*self.host).get_storage.unwrap()(
                 self.context,
                 address as *const Address,
@@ -382,7 +374,6 @@ impl<'a> ExecutionContext<'a> {
         value: &Bytes32,
     ) -> StorageStatus {
         unsafe {
-            assert!((*self.host).set_storage.is_some());
             (*self.host).set_storage.unwrap()(
                 self.context,
                 address as *const Address,
@@ -394,32 +385,22 @@ impl<'a> ExecutionContext<'a> {
 
     /// Get balance of an account.
     pub fn get_balance(&self, address: &Address) -> Uint256 {
-        unsafe {
-            assert!((*self.host).get_balance.is_some());
-            (*self.host).get_balance.unwrap()(self.context, address as *const Address)
-        }
+        unsafe { (*self.host).get_balance.unwrap()(self.context, address as *const Address) }
     }
 
     /// Get code size of an account.
     pub fn get_code_size(&self, address: &Address) -> usize {
-        unsafe {
-            assert!((*self.host).get_code_size.is_some());
-            (*self.host).get_code_size.unwrap()(self.context, address as *const Address)
-        }
+        unsafe { (*self.host).get_code_size.unwrap()(self.context, address as *const Address) }
     }
 
     /// Get code hash of an account.
     pub fn get_code_hash(&self, address: &Address) -> Bytes32 {
-        unsafe {
-            assert!((*self.host).get_code_hash.is_some());
-            (*self.host).get_code_hash.unwrap()(self.context, address as *const Address)
-        }
+        unsafe { (*self.host).get_code_hash.unwrap()(self.context, address as *const Address) }
     }
 
     /// Copy code of an account.
     pub fn copy_code(&self, address: &Address, code_offset: usize, buffer: &mut [u8]) -> usize {
         unsafe {
-            assert!((*self.host).copy_code.is_some());
             (*self.host).copy_code.unwrap()(
                 self.context,
                 address as *const Address,
@@ -434,7 +415,6 @@ impl<'a> ExecutionContext<'a> {
     /// Self-destruct the current account.
     pub fn selfdestruct(&mut self, address: &Address, beneficiary: &Address) -> bool {
         unsafe {
-            assert!((*self.host).selfdestruct.is_some());
             (*self.host).selfdestruct.unwrap()(
                 self.context,
                 address as *const Address,
@@ -484,23 +464,18 @@ impl<'a> ExecutionContext<'a> {
             code_hash: std::ptr::null(),
         };
         unsafe {
-            assert!((*self.host).call.is_some());
             (*self.host).call.unwrap()(self.context, &message as *const ffi::evmc_message).into()
         }
     }
 
     /// Get block hash of an account.
     pub fn get_block_hash(&self, num: i64) -> Bytes32 {
-        unsafe {
-            assert!((*self.host).get_block_hash.is_some());
-            (*self.host).get_block_hash.unwrap()(self.context, num)
-        }
+        unsafe { (*self.host).get_block_hash.unwrap()(self.context, num) }
     }
 
     /// Emit a log.
     pub fn emit_log(&mut self, address: &Address, data: &[u8], topics: &[Bytes32]) {
         unsafe {
-            assert!((*self.host).emit_log.is_some());
             (*self.host).emit_log.unwrap()(
                 self.context,
                 address as *const Address,
@@ -515,16 +490,12 @@ impl<'a> ExecutionContext<'a> {
 
     /// Access an account.
     pub fn access_account(&mut self, address: &Address) -> AccessStatus {
-        unsafe {
-            assert!((*self.host).access_account.is_some());
-            (*self.host).access_account.unwrap()(self.context, address as *const Address)
-        }
+        unsafe { (*self.host).access_account.unwrap()(self.context, address as *const Address) }
     }
 
     /// Access a storage key.
     pub fn access_storage(&mut self, address: &Address, key: &Bytes32) -> AccessStatus {
         unsafe {
-            assert!((*self.host).access_storage.is_some());
             (*self.host).access_storage.unwrap()(
                 self.context,
                 address as *const Address,
@@ -536,7 +507,6 @@ impl<'a> ExecutionContext<'a> {
     /// Read from a transient storage key.
     pub fn get_transient_storage(&self, address: &Address, key: &Bytes32) -> Bytes32 {
         unsafe {
-            assert!(self.host.get_transient_storage.is_some());
             self.host.get_transient_storage.unwrap()(
                 self.context,
                 address as *const Address,
@@ -548,7 +518,6 @@ impl<'a> ExecutionContext<'a> {
     /// Set value of a transient storage key.
     pub fn set_transient_storage(&mut self, address: &Address, key: &Bytes32, value: &Bytes32) {
         unsafe {
-            assert!(self.host.set_transient_storage.is_some());
             self.host.set_transient_storage.unwrap()(
                 self.context,
                 address as *const Address,
@@ -653,11 +622,7 @@ impl From<ExecutionResult> for ffi::evmc_result {
             output_data: buffer,
             output_size: len,
             release: Some(release_stack_result),
-            create_address: if value.create_address.is_some() {
-                value.create_address.unwrap()
-            } else {
-                Address { bytes: [0u8; 20] }
-            },
+            create_address: value.create_address.unwrap_or_default(),
             padding: [0u8; 4],
         }
     }
@@ -797,10 +762,7 @@ impl<'a> From<&'a ffi::evmc_message> for ExecutionMessage<'a> {
             gas: message.gas,
             recipient: message.recipient,
             sender: message.sender,
-            input: if message.input_data.is_null() {
-                assert_eq!(message.input_size, 0);
-                None
-            } else if message.input_size == 0 {
+            input: if message.input_data.is_null() || message.input_size == 0 {
                 None
             } else {
                 Some(unsafe { slice::from_raw_parts(message.input_data, message.input_size) })
@@ -808,10 +770,7 @@ impl<'a> From<&'a ffi::evmc_message> for ExecutionMessage<'a> {
             value: message.value,
             create2_salt: message.create2_salt,
             code_address: message.code_address,
-            code: if message.code.is_null() {
-                assert_eq!(message.code_size, 0);
-                None
-            } else if message.code_size == 0 {
+            code: if message.code.is_null() || message.code_size == 0 {
                 None
             } else {
                 Some(unsafe { slice::from_raw_parts(message.code, message.code_size) })
