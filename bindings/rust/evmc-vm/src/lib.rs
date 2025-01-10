@@ -589,6 +589,16 @@ unsafe fn deallocate_output_data<T>(ptr: *const T, size: usize) {
     }
 }
 
+fn optional_boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const u8, usize) {
+    if let Some(buf) = slice {
+        if !buf.is_empty() {
+            let len = buf.len();
+            return (Box::into_raw(buf) as *const u8, len);
+        }
+    }
+    (std::ptr::null(), 0)
+}
+
 /// Returns a pointer to a heap-allocated evmc_result.
 impl From<ExecutionResult> for *const ffi::evmc_result {
     fn from(value: ExecutionResult) -> Self {
@@ -609,12 +619,7 @@ extern "C" fn release_heap_result(result: *const ffi::evmc_result) {
 /// Returns a pointer to a stack-allocated evmc_result.
 impl From<ExecutionResult> for ffi::evmc_result {
     fn from(value: ExecutionResult) -> Self {
-        let (buffer, len) = if let Some(buf) = value.output {
-            let len = buf.len();
-            (Box::<[u8]>::into_raw(buf) as *const u8, len)
-        } else {
-            (std::ptr::null(), 0)
-        };
+        let (buffer, len) = optional_boxed_slice_into_raw(value.output);
         Self {
             status_code: value.status_code,
             gas_left: value.gas_left,
@@ -631,12 +636,7 @@ impl From<ExecutionResult> for ffi::evmc_result {
 /// Returns a pointer to a stack-allocated evmc_step_result.
 impl From<StepResult> for ffi::evmc_step_result {
     fn from(value: StepResult) -> Self {
-        let (output_data, output_size) = if let Some(buf) = value.output {
-            let len = buf.len();
-            (Box::<[u8]>::into_raw(buf) as *const u8, len)
-        } else {
-            (std::ptr::null(), 0)
-        };
+        let (output_data, output_size) = optional_boxed_slice_into_raw(value.output);
         let (stack, stack_size) = allocate_output_data(Some(&value.stack));
         let (memory, memory_size) = allocate_output_data(Some(&value.memory));
         let (last_call_return_data, last_call_return_data_size) =
