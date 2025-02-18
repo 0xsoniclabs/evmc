@@ -4,12 +4,11 @@
 
 extern crate bindgen;
 
-use std::env;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 fn gen_bindings() {
     let bindings = bindgen::Builder::default()
-        .header("evmc.h")
+        .header("../../../include/evmc/evmc.h")
         .generate_comments(true)
         // do not generate an empty enum for EVMC_ABI_VERSION
         .constified_enum("")
