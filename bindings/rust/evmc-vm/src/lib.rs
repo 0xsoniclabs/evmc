@@ -521,61 +521,23 @@ impl From<ffi::evmc_result> for ExecutionResult {
     }
 }
 
-fn allocate_output_data<T>(output: Option<&Vec<T>>) -> (*const T, usize) {
-    if let Some(buf) = output {
-        if !buf.is_empty() {
-            let buf_len = buf.len();
-
-            // Manually allocate heap memory for the new home of the output buffer.
-            let memlayout =
-                std::alloc::Layout::from_size_align(buf_len * size_of::<T>(), align_of::<T>())
-                    .expect("Bad layout");
-            let new_buf = unsafe { std::alloc::alloc(memlayout) as *mut T };
-            unsafe {
-                // Copy the data into the allocated buffer.
-                std::ptr::copy(buf.as_ptr(), new_buf, buf_len);
-            }
-
-            return (new_buf as *const T, buf_len);
-        }
-    }
-    (std::ptr::null(), 0)
-}
-
-unsafe fn deallocate_output_data<T>(ptr: *const T, size: usize) {
+unsafe fn deallocate_buffer<T>(ptr: *const T, size: usize) {
     if !ptr.is_null() {
-        let buf_layout =
-            std::alloc::Layout::from_size_align(size * size_of::<T>(), align_of::<T>())
-                .expect("Bad layout");
-        std::alloc::dealloc(ptr as *mut u8, buf_layout);
+        let _ = unsafe { Box::from_raw(slice::from_raw_parts_mut(ptr as *mut T, size)) };
     }
 }
 
-fn optional_boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const u8, usize) {
-    if let Some(buf) = slice {
-        if !buf.is_empty() {
-            let len = buf.len();
-            return (Box::into_raw(buf) as *const u8, len);
-        }
-    }
-    (std::ptr::null(), 0)
+fn optional_vec_into_raw<T>(output: Option<Vec<T>>) -> (*const T, usize) {
+    optional_boxed_slice_into_raw(output.map(Vec::into_boxed_slice))
 }
 
-/// Returns a pointer to a heap-allocated evmc_result.
-impl From<ExecutionResult> for *const ffi::evmc_result {
-    fn from(value: ExecutionResult) -> Self {
-        let mut result: ffi::evmc_result = value.into();
-        result.release = Some(release_heap_result);
-        Box::into_raw(Box::new(result))
-    }
-}
-
-/// Callback to pass across FFI, de-allocating the optional output_data.
-extern "C" fn release_heap_result(result: *const ffi::evmc_result) {
-    unsafe {
-        let tmp = Box::from_raw(result as *mut ffi::evmc_result);
-        deallocate_output_data(tmp.output_data, tmp.output_size);
-    }
+fn optional_boxed_slice_into_raw<T>(slice: Option<Box<[T]>>) -> (*const T, usize) {
+    slice
+        .map(|v| {
+            let len = v.len();
+            (Box::into_raw(v) as *const T, len)
+        })
+        .unwrap_or((std::ptr::null(), 0))
 }
 
 /// Returns a pointer to a stack-allocated evmc_result.
@@ -599,10 +561,10 @@ impl From<ExecutionResult> for ffi::evmc_result {
 impl From<StepResult> for ffi::evmc_step_result {
     fn from(value: StepResult) -> Self {
         let (output_data, output_size) = optional_boxed_slice_into_raw(value.output);
-        let (stack, stack_size) = allocate_output_data(Some(&value.stack));
-        let (memory, memory_size) = allocate_output_data(Some(&value.memory));
+        let (stack, stack_size) = optional_vec_into_raw(Some(value.stack));
+        let (memory, memory_size) = optional_vec_into_raw(Some(value.memory));
         let (last_call_return_data, last_call_return_data_size) =
-            allocate_output_data(value.last_call_return_data.as_ref());
+            optional_vec_into_raw(value.last_call_return_data);
 
         Self {
             step_status_code: value.step_status_code,
@@ -700,7 +662,7 @@ impl From<ffi::evmc_step_result> for StepResult {
 extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
     unsafe {
         let tmp = *result;
-        deallocate_output_data(tmp.output_data, tmp.output_size);
+        deallocate_buffer(tmp.output_data, tmp.output_size);
     }
 }
 
@@ -708,10 +670,10 @@ extern "C" fn release_stack_result(result: *const ffi::evmc_result) {
 extern "C" fn release_stack_step_result(result: *const ffi::evmc_step_result) {
     unsafe {
         let tmp = *result;
-        deallocate_output_data(tmp.output_data, tmp.output_size);
-        deallocate_output_data(tmp.stack, tmp.stack_size);
-        deallocate_output_data(tmp.memory, tmp.memory_size);
-        deallocate_output_data(tmp.last_call_return_data, tmp.last_call_return_data_size);
+        deallocate_buffer(tmp.output_data, tmp.output_size);
+        deallocate_buffer(tmp.stack, tmp.stack_size);
+        deallocate_buffer(tmp.memory, tmp.memory_size);
+        deallocate_buffer(tmp.last_call_return_data, tmp.last_call_return_data_size);
     }
 }
 
@@ -796,53 +758,6 @@ mod tests {
         assert!(r.output().is_some());
         assert_eq!(r.output().unwrap().len(), 4);
         assert!(r.create_address().is_some());
-    }
-
-    #[test]
-    fn result_into_heap_ffi() {
-        let r = ExecutionResult::new(
-            StatusCode::EVMC_FAILURE,
-            420,
-            21,
-            Some(Box::new([0xc0, 0xff, 0xee, 0x71, 0x75])),
-        );
-
-        let f: *const ffi::evmc_result = r.into();
-        assert!(!f.is_null());
-        unsafe {
-            assert_eq!((*f).status_code, StatusCode::EVMC_FAILURE);
-            assert_eq!((*f).gas_left, 420);
-            assert_eq!((*f).gas_refund, 21);
-            assert!(!(*f).output_data.is_null());
-            assert_eq!((*f).output_size, 5);
-            assert_eq!(
-                std::slice::from_raw_parts((*f).output_data, 5) as &[u8],
-                &[0xc0, 0xff, 0xee, 0x71, 0x75]
-            );
-            assert_eq!((*f).create_address.bytes, [0u8; 20]);
-            if (*f).release.is_some() {
-                (*f).release.unwrap()(f);
-            }
-        }
-    }
-
-    #[test]
-    fn result_into_heap_ffi_empty_data() {
-        let r = ExecutionResult::new(StatusCode::EVMC_FAILURE, 420, 21, None);
-
-        let f: *const ffi::evmc_result = r.into();
-        assert!(!f.is_null());
-        unsafe {
-            assert_eq!((*f).status_code, StatusCode::EVMC_FAILURE);
-            assert_eq!((*f).gas_left, 420);
-            assert_eq!((*f).gas_refund, 21);
-            assert!((*f).output_data.is_null());
-            assert_eq!((*f).output_size, 0);
-            assert_eq!((*f).create_address.bytes, [0u8; 20]);
-            if (*f).release.is_some() {
-                (*f).release.unwrap()(f);
-            }
-        }
     }
 
     #[test]

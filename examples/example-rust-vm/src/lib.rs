@@ -3,6 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 use core::str::FromStr;
+
 use evmc_declare::evmc_declare_vm;
 use evmc_vm::*;
 
@@ -76,6 +77,6 @@ impl EvmcVm for ExampleRustVM {
         _context.set_storage(message.recipient(), &storage_key, &storage_value);
 
         let ret = format!("{}", block_number).into_bytes();
-        ExecutionResult::success(message.gas() / 2, 0, Some(&ret))
+        ExecutionResult::success(message.gas() / 2, 0, Some(ret.into_boxed_slice()))
     }
 }
