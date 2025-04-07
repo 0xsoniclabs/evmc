@@ -27,6 +27,7 @@ pub trait EvmcVm {
     fn set_option(&mut self, _: &str, _: &str) -> Result<(), SetOptionError> {
         Ok(())
     }
+
     /// This is called for every incoming message.
     fn execute<'a>(
         &self,
@@ -343,27 +344,20 @@ impl<'a> ExecutionContext<'a> {
 
     /// Retrieve the transaction context.
     pub fn get_tx_context(&mut self) -> &ExecutionTxContext {
-        if self.tx_context.is_none() {
-            let tx_context = unsafe { self.host.get_tx_context.unwrap()(self.context) };
-            self.tx_context = Some(tx_context);
-        }
-        self.tx_context.as_ref().unwrap()
+        let get_tx_context = self.host.get_tx_context;
+        let context = self.context;
+        self.tx_context
+            .get_or_insert_with(|| unsafe { get_tx_context.unwrap()(context) })
     }
 
     /// Check if an account exists.
     pub fn account_exists(&self, address: &Address) -> bool {
-        unsafe { self.host.account_exists.unwrap()(self.context, address as *const Address) }
+        unsafe { self.host.account_exists.unwrap()(self.context, address) }
     }
 
     /// Read from a storage key.
     pub fn get_storage(&self, address: &Address, key: &Bytes32) -> Bytes32 {
-        unsafe {
-            self.host.get_storage.unwrap()(
-                self.context,
-                address as *const Address,
-                key as *const Bytes32,
-            )
-        }
+        unsafe { self.host.get_storage.unwrap()(self.context, address, key) }
     }
 
     /// Set value of a storage key.
@@ -373,29 +367,22 @@ impl<'a> ExecutionContext<'a> {
         key: &Bytes32,
         value: &Bytes32,
     ) -> StorageStatus {
-        unsafe {
-            self.host.set_storage.unwrap()(
-                self.context,
-                address as *const Address,
-                key as *const Bytes32,
-                value as *const Bytes32,
-            )
-        }
+        unsafe { self.host.set_storage.unwrap()(self.context, address, key, value) }
     }
 
     /// Get balance of an account.
     pub fn get_balance(&self, address: &Address) -> Uint256 {
-        unsafe { self.host.get_balance.unwrap()(self.context, address as *const Address) }
+        unsafe { self.host.get_balance.unwrap()(self.context, address) }
     }
 
     /// Get code size of an account.
     pub fn get_code_size(&self, address: &Address) -> usize {
-        unsafe { self.host.get_code_size.unwrap()(self.context, address as *const Address) }
+        unsafe { self.host.get_code_size.unwrap()(self.context, address) }
     }
 
     /// Get code hash of an account.
     pub fn get_code_hash(&self, address: &Address) -> Bytes32 {
-        unsafe { self.host.get_code_hash.unwrap()(self.context, address as *const Address) }
+        unsafe { self.host.get_code_hash.unwrap()(self.context, address) }
     }
 
     /// Copy code of an account.
@@ -403,7 +390,7 @@ impl<'a> ExecutionContext<'a> {
         unsafe {
             self.host.copy_code.unwrap()(
                 self.context,
-                address as *const Address,
+                address,
                 code_offset,
                 // FIXME: ensure that alignment of the array elements is OK
                 buffer.as_mut_ptr(),
@@ -414,13 +401,7 @@ impl<'a> ExecutionContext<'a> {
 
     /// Self-destruct the current account.
     pub fn selfdestruct(&mut self, address: &Address, beneficiary: &Address) -> bool {
-        unsafe {
-            self.host.selfdestruct.unwrap()(
-                self.context,
-                address as *const Address,
-                beneficiary as *const Address,
-            )
-        }
+        unsafe { self.host.selfdestruct.unwrap()(self.context, address, beneficiary) }
     }
 
     /// Call to another account.
@@ -478,7 +459,7 @@ impl<'a> ExecutionContext<'a> {
         unsafe {
             self.host.emit_log.unwrap()(
                 self.context,
-                address as *const Address,
+                address,
                 // FIXME: ensure that alignment of the array elements is OK
                 data.as_ptr(),
                 data.len(),
@@ -490,41 +471,22 @@ impl<'a> ExecutionContext<'a> {
 
     /// Access an account.
     pub fn access_account(&mut self, address: &Address) -> AccessStatus {
-        unsafe { self.host.access_account.unwrap()(self.context, address as *const Address) }
+        unsafe { self.host.access_account.unwrap()(self.context, address) }
     }
 
     /// Access a storage key.
     pub fn access_storage(&mut self, address: &Address, key: &Bytes32) -> AccessStatus {
-        unsafe {
-            self.host.access_storage.unwrap()(
-                self.context,
-                address as *const Address,
-                key as *const Bytes32,
-            )
-        }
+        unsafe { self.host.access_storage.unwrap()(self.context, address, key) }
     }
 
     /// Read from a transient storage key.
     pub fn get_transient_storage(&self, address: &Address, key: &Bytes32) -> Bytes32 {
-        unsafe {
-            self.host.get_transient_storage.unwrap()(
-                self.context,
-                address as *const Address,
-                key as *const Bytes32,
-            )
-        }
+        unsafe { self.host.get_transient_storage.unwrap()(self.context, address, key) }
     }
 
     /// Set value of a transient storage key.
     pub fn set_transient_storage(&mut self, address: &Address, key: &Bytes32, value: &Bytes32) {
-        unsafe {
-            self.host.set_transient_storage.unwrap()(
-                self.context,
-                address as *const Address,
-                key as *const Bytes32,
-                value as *const Bytes32,
-            )
-        }
+        unsafe { self.host.set_transient_storage.unwrap()(self.context, address, key, value) }
     }
 }
 

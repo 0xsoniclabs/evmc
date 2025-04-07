@@ -2,9 +2,9 @@
 // Copyright 2019 The EVMC Authors.
 // Licensed under the Apache License, Version 2.0.
 
-use crate::EvmcVm;
-
 use std::ops::{Deref, DerefMut};
+
+use crate::EvmcVm;
 
 /// Container struct for EVMC instances and user-defined data.
 #[repr(C)]
@@ -39,10 +39,7 @@ where
     }
 
     /// Convert boxed self into an FFI pointer, surrendering ownership of the heap data.
-    ///
-    /// # Safety
-    /// This function will return a valid instance pointer.
-    pub unsafe fn into_ffi_pointer(boxed: Box<Self>) -> *mut ::evmc_sys::evmc_vm {
+    pub fn into_ffi_pointer(boxed: Box<Self>) -> *mut ::evmc_sys::evmc_vm {
         Box::into_raw(boxed) as *mut ::evmc_sys::evmc_vm
     }
 }
@@ -100,10 +97,7 @@ where
     }
 
     /// Convert boxed self into an FFI pointer, surrendering ownership of the heap data.
-    ///
-    /// # Safety
-    /// This function will return a valid instance pointer.
-    pub unsafe fn into_ffi_pointer(boxed: Box<Self>) -> *mut ::evmc_sys::evmc_vm_steppable {
+    pub fn into_ffi_pointer(boxed: Box<Self>) -> *mut ::evmc_sys::evmc_vm_steppable {
         Box::into_raw(boxed) as *mut ::evmc_sys::evmc_vm_steppable
     }
 }
@@ -142,8 +136,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::*;
-    use crate::{ExecutionContext, ExecutionMessage, ExecutionResult};
+    use crate::{types::*, ExecutionContext, ExecutionMessage, ExecutionResult};
 
     struct TestVm {}
 
@@ -249,7 +242,7 @@ mod tests {
             ::evmc_sys::evmc_status_code::EVMC_FAILURE
         );
 
-        let ptr = unsafe { EvmcContainer::into_ffi_pointer(container) };
+        let ptr = EvmcContainer::into_ffi_pointer(container);
 
         let mut context = ExecutionContext::new(&host, host_context);
         let container = unsafe { EvmcContainer::<TestVm>::from_ffi_pointer(ptr) };
