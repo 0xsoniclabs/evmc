@@ -116,6 +116,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -477,32 +478,52 @@ func (vm *VMSteppable) StepN(params StepParameters) (res StepResult, err error) 
 	return res, err
 }
 
+// A host context is handed to the VM as an opaque id and looked up again on every single host
+// callback, so the lookup has to be as cheap as possible. Ids are slot indices into a table rather
+// than keys of a map, which makes a lookup one atomic load plus one slice index and needs no lock:
+// the table only ever grows, a slot is written before its id is handed out, and released ids are
+// recycled through a free list. Only the free list and growing the table are guarded.
 var (
-	hostContextCounter uintptr
-	hostContextMap     = map[uintptr]HostContext{}
-	hostContextMapMu   sync.Mutex
+	hostContextsMu   sync.Mutex
+	hostContexts     atomic.Pointer[[]HostContext]
+	hostContextsFree []uintptr
 )
 
+// addHostContext stores ctx in a free slot and returns its id, the index of that slot.
 func addHostContext(ctx HostContext) uintptr {
-	hostContextMapMu.Lock()
-	id := hostContextCounter
-	hostContextCounter++
-	hostContextMap[id] = ctx
-	hostContextMapMu.Unlock()
-	return id
+	hostContextsMu.Lock()
+	defer hostContextsMu.Unlock()
+
+	if n := len(hostContextsFree); n > 0 {
+		id := hostContextsFree[n-1]
+		hostContextsFree = hostContextsFree[:n-1]
+		(*hostContexts.Load())[id] = ctx
+		return id
+	}
+
+	// Growing appends to the current table, reusing its backing array when that has spare capacity,
+	// and publishes a new slice header. Appending leaves the index of every existing element
+	// unchanged, so all ids handed out so far stay reachable through the new header.
+	var table []HostContext
+	if old := hostContexts.Load(); old != nil {
+		table = *old
+	}
+	table = append(table, ctx)
+	hostContexts.Store(&table)
+	return uintptr(len(table) - 1)
 }
 
 func removeHostContext(id uintptr) {
-	hostContextMapMu.Lock()
-	delete(hostContextMap, id)
-	hostContextMapMu.Unlock()
+	hostContextsMu.Lock()
+	defer hostContextsMu.Unlock()
+
+	// Drop the reference so the context and everything it keeps alive can be collected.
+	(*hostContexts.Load())[id] = nil
+	hostContextsFree = append(hostContextsFree, id)
 }
 
-func getHostContext(idx uintptr) HostContext {
-	hostContextMapMu.Lock()
-	ctx := hostContextMap[idx]
-	hostContextMapMu.Unlock()
-	return ctx
+func getHostContext(id uintptr) HostContext {
+	return (*hostContexts.Load())[id]
 }
 
 // Hash and evmc_bytes32, like Address and evmc_address, are the same bytes in the same order, so
