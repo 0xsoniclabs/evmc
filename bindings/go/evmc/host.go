@@ -88,6 +88,10 @@ type HostContext interface {
 	GetCode(addr Address) []byte
 	Selfdestruct(addr Address, beneficiary Address) bool
 	GetTxContext() TxContext
+	// GetBlobHashes returns the BlobHashes that GetTxContext hands out, so that the bindings can
+	// pin them for the duration of an execution. It must return exactly the slice GetTxContext
+	// returns, and is called once per execution instead of assembling a whole TxContext.
+	GetBlobHashes() []Hash
 	GetBlockHash(number int64) Hash
 	EmitLog(addr Address, topics []Hash, data []byte)
 	Call(kind CallKind,

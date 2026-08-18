@@ -311,9 +311,9 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 		cCodeHash = &hash
 	}
 
-	txBlobHashes := ctx.GetTxContext().BlobHashes
+	txBlobHashes := ctx.GetBlobHashes()
 	if len(txBlobHashes) > 0 {
-		pnr := new(runtime.Pinner)
+		var pnr runtime.Pinner
 		pnr.Pin(&txBlobHashes[0])
 		defer pnr.Unpin()
 	}
@@ -405,9 +405,9 @@ func (vm *VMSteppable) StepN(params StepParameters) (res StepResult, err error) 
 		codeHash = &hash
 	}
 
-	txBlobhashes := params.Context.GetTxContext().BlobHashes
+	txBlobhashes := params.Context.GetBlobHashes()
 	if len(txBlobhashes) > 0 {
-		pnr := new(runtime.Pinner)
+		var pnr runtime.Pinner
 		pnr.Pin(&txBlobhashes[0])
 		defer pnr.Unpin()
 	}
