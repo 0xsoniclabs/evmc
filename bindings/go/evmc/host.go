@@ -78,6 +78,13 @@ type TxContext struct {
 	BlobHashes  []Hash
 }
 
+// TxBlobHashProvider is an optional interface for a HostContext. Implementing it lets the bindings
+// learn whether the transaction has blob hashes, which they need in order to pin them, without
+// assembling a full TxContext on every execution.
+type TxBlobHashProvider interface {
+	TxBlobHashes() []Hash
+}
+
 type HostContext interface {
 	AccountExists(addr Address) bool
 	GetStorage(addr Address, key Hash) Hash

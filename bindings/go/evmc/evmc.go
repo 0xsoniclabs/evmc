@@ -327,7 +327,16 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 		hasCodeHash = 1
 	}
 
-	txBlobHashes := ctx.GetTxContext().BlobHashes
+	// The VM keeps reading the blob hashes after the getTxContext callback has returned, so the
+	// slice must not move for the duration of the execution. Only their presence matters here, and
+	// assembling a whole tx context to find that out costs more than the pinning itself, so ask for
+	// them directly when the host can answer that cheaply.
+	var txBlobHashes []Hash
+	if provider, ok := ctx.(TxBlobHashProvider); ok {
+		txBlobHashes = provider.TxBlobHashes()
+	} else {
+		txBlobHashes = ctx.GetTxContext().BlobHashes
+	}
 	if len(txBlobHashes) > 0 {
 		var pinner runtime.Pinner
 		pinner.Pin(&txBlobHashes[0])
