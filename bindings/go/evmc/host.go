@@ -49,19 +49,11 @@ const (
 )
 
 func goAddress(in C.evmc_address) Address {
-	out := Address{}
-	for i := 0; i < len(out); i++ {
-		out[i] = byte(in.bytes[i])
-	}
-	return out
+	return *(*Address)(unsafe.Pointer(&in))
 }
 
 func goHash(in C.evmc_bytes32) Hash {
-	out := Hash{}
-	for i := 0; i < len(out); i++ {
-		out[i] = byte(in.bytes[i])
-	}
-	return out
+	return *(*Hash)(unsafe.Pointer(&in))
 }
 
 func goByteSlice(data *C.uint8_t, size C.size_t) []byte {
