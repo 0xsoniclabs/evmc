@@ -495,16 +495,6 @@ func getHostContext(idx uintptr) HostContext {
 	return ctx
 }
 
-// Hash and evmc_bytes32, like Address and evmc_address, are the same bytes in the same order, so
-// converting is a move rather than 20 or 32 individual byte assignments. The constants below fail to
-// compile if that ever stops being true, and evmcBytes32_ptr already relies on the same identity.
-const (
-	_ uintptr = unsafe.Sizeof(Hash{}) - unsafe.Sizeof(C.evmc_bytes32{})
-	_ uintptr = unsafe.Sizeof(C.evmc_bytes32{}) - unsafe.Sizeof(Hash{})
-	_ uintptr = unsafe.Sizeof(Address{}) - unsafe.Sizeof(C.evmc_address{})
-	_ uintptr = unsafe.Sizeof(C.evmc_address{}) - unsafe.Sizeof(Address{})
-)
-
 func evmcBytes32(in Hash) C.evmc_bytes32 {
 	return *(*C.evmc_bytes32)(unsafe.Pointer(&in))
 }
