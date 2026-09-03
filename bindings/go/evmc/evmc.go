@@ -496,19 +496,11 @@ func getHostContext(idx uintptr) HostContext {
 }
 
 func evmcBytes32(in Hash) C.evmc_bytes32 {
-	out := C.evmc_bytes32{}
-	for i := 0; i < len(in); i++ {
-		out.bytes[i] = C.uint8_t(in[i])
-	}
-	return out
+	return *(*C.evmc_bytes32)(unsafe.Pointer(&in))
 }
 
 func evmcAddress(address Address) C.evmc_address {
-	r := C.evmc_address{}
-	for i := 0; i < len(address); i++ {
-		r.bytes[i] = C.uint8_t(address[i])
-	}
-	return r
+	return *(*C.evmc_address)(unsafe.Pointer(&address))
 }
 
 func bytesPtr(bytes []byte) *C.uint8_t {
