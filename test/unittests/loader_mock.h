@@ -42,6 +42,14 @@ static evmc_create_fn evmc_test_get_symbol_address(int handle, const char* symbo
     return NULL;
 }
 
+static evmc_create_steppable_fn evmc_test_get_steppable_symbol_address(int handle,
+                                                                       const char* symbol)
+{
+    (void)handle;
+    (void)symbol;
+    return NULL;
+}
+
 static const char* evmc_test_get_last_error_msg(void)
 {
     // Return the last error message only once.
@@ -54,4 +62,6 @@ static const char* evmc_test_get_last_error_msg(void)
 #define DLL_OPEN(filename) evmc_test_load_library(filename)
 #define DLL_CLOSE(handle) evmc_test_free_library(handle)
 #define DLL_GET_CREATE_FN(handle, name) evmc_test_get_symbol_address(handle, name)
+#define DLL_GET_CREATE_STEPABLE_FN(handle, name) \
+    evmc_test_get_steppable_symbol_address(handle, name)
 #define DLL_GET_ERROR_MSG() evmc_test_get_last_error_msg()
