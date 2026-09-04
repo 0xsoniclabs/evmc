@@ -22,4 +22,4 @@ jobs:
     - name: Generate example VM
       run: go generate ./bindings/go/evmc
     - name: Go test
-      run: go test -v ./bindings/go/evmc
+      run: go test -race -v ./bindings/go/evmc
