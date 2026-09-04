@@ -8,6 +8,7 @@ package evmc
 
 import (
 	"bytes"
+	"sync"
 	"testing"
 )
 
@@ -85,4 +86,81 @@ func TestErrorMessage(t *testing.T) {
 	check(Error(3), "out of gas")
 	check(Error(-1), "internal error")
 	check(Error(1000), "<unknown>")
+}
+
+// tableCtx gives a host context a distinct identity, which the zero-size
+// testHostContext does not have.
+type tableCtx struct {
+	testHostContext
+	n int
+}
+
+func TestAddHostContext_ReturnsDistinctIdsForEachContext(t *testing.T) {
+	const contexts = 8
+
+	ids := map[uintptr]HostContext{}
+	for i := 0; i < contexts; i++ {
+		ctx := &tableCtx{n: i}
+		id := addHostContext(ctx)
+		defer removeHostContext(id)
+		if _, taken := ids[id]; taken {
+			t.Fatalf("id %d handed out twice", id)
+		}
+		ids[id] = ctx
+	}
+
+	// Earlier ids must stay reachable when adding later contexts grows the table.
+	for id, ctx := range ids {
+		if got := getHostContext(id); got != ctx {
+			t.Errorf("id %d resolves to %v, expected %v", id, got, ctx)
+		}
+	}
+}
+
+func TestAddHostContext_ReusesReleasedId(t *testing.T) {
+	released := addHostContext(&tableCtx{})
+	removeHostContext(released)
+
+	id := addHostContext(&tableCtx{})
+	defer removeHostContext(id)
+	if id != released {
+		t.Errorf("id is %d, expected the released %d", id, released)
+	}
+}
+
+func TestRemoveHostContext_ClearsSlot(t *testing.T) {
+	id := addHostContext(&tableCtx{})
+	removeHostContext(id)
+
+	if ctx := getHostContext(id); ctx != nil {
+		t.Errorf("released slot still holds %v", ctx)
+	}
+}
+
+func TestHostContextTable_SupportsConcurrentExecutions(t *testing.T) {
+	const goroutines = 16
+	const cycles = 100
+
+	var start, done sync.WaitGroup
+	start.Add(goroutines)
+	done.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(n int) {
+			defer done.Done()
+
+			// Release all goroutines at once, so adds, lookups and removes interleave.
+			start.Done()
+			start.Wait()
+
+			for c := 0; c < cycles; c++ {
+				ctx := &tableCtx{n: n}
+				id := addHostContext(ctx)
+				if got := getHostContext(id); got != ctx {
+					t.Errorf("id %d resolves to %v, expected %v", id, got, ctx)
+				}
+				removeHostContext(id)
+			}
+		}(i)
+	}
+	done.Wait()
 }

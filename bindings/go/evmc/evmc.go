@@ -101,6 +101,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -468,31 +469,51 @@ func (vm *VMSteppable) StepN(params StepParameters) (res StepResult, err error) 
 }
 
 var (
-	hostContextCounter uintptr
-	hostContextMap     = map[uintptr]HostContext{}
-	hostContextMapMu   sync.Mutex
+	// hostContextsMu guards the free list and all writes to the table.
+	hostContextsMu sync.Mutex
+	// Indexed by id; never shrinks. Slot writes happen under hostContextsMu and are
+	// published by storing the header (unchanged or not), which lookups load without
+	// locking. Safe because host callbacks run on the goroutine that called into the VM.
+	hostContexts     atomic.Pointer[[]HostContext]
+	hostContextsFree []uintptr
 )
 
 func addHostContext(ctx HostContext) uintptr {
-	hostContextMapMu.Lock()
-	id := hostContextCounter
-	hostContextCounter++
-	hostContextMap[id] = ctx
-	hostContextMapMu.Unlock()
-	return id
+	hostContextsMu.Lock()
+	defer hostContextsMu.Unlock()
+
+	if n := len(hostContextsFree); n > 0 {
+		id := hostContextsFree[n-1]
+		hostContextsFree = hostContextsFree[:n-1]
+		table := hostContexts.Load()
+		(*table)[id] = ctx
+		hostContexts.Store(table)
+		return id
+	}
+
+	// Appending leaves the index of every existing element unchanged, so all ids
+	// handed out so far stay reachable through the new header.
+	var table []HostContext
+	if old := hostContexts.Load(); old != nil {
+		table = *old
+	}
+	table = append(table, ctx)
+	hostContexts.Store(&table)
+	return uintptr(len(table) - 1)
 }
 
 func removeHostContext(id uintptr) {
-	hostContextMapMu.Lock()
-	delete(hostContextMap, id)
-	hostContextMapMu.Unlock()
+	hostContextsMu.Lock()
+	defer hostContextsMu.Unlock()
+
+	table := hostContexts.Load()
+	(*table)[id] = nil
+	hostContexts.Store(table)
+	hostContextsFree = append(hostContextsFree, id)
 }
 
-func getHostContext(idx uintptr) HostContext {
-	hostContextMapMu.Lock()
-	ctx := hostContextMap[idx]
-	hostContextMapMu.Unlock()
-	return ctx
+func getHostContext(id uintptr) HostContext {
+	return (*hostContexts.Load())[id]
 }
 
 func evmcBytes32(in Hash) C.evmc_bytes32 {
