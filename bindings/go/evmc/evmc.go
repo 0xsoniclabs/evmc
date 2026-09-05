@@ -25,28 +25,37 @@ static inline enum evmc_set_option_result set_option(struct evmc_vm* vm, char* n
 
 extern const struct evmc_host_interface evmc_go_host;
 
+// Releasing a result takes its address, which for a Go caller means the result cannot stay in the
+// caller's frame and costs one heap allocation per execution. Doing it here keeps the result on the
+// Go stack.
+static void release_result(struct evmc_result result)
+{
+	if (result.release != NULL)
+		result.release(&result);
+}
+
 static struct evmc_result execute_wrapper(struct evmc_vm* vm,
 	uintptr_t context_index, enum evmc_revision rev,
 	enum evmc_call_kind kind, uint32_t flags, int32_t depth, int64_t gas,
-	const evmc_address* recipient, const evmc_address* sender,
-	const uint8_t* input_data, size_t input_size, const evmc_uint256be* value,
-	const evmc_bytes32* code_hash, const uint8_t* code, size_t code_size)
+	evmc_address recipient, evmc_address sender,
+	const uint8_t* input_data, size_t input_size, evmc_uint256be value,
+	evmc_bytes32 code_hash, int has_code_hash, const uint8_t* code, size_t code_size)
 {
 	struct evmc_message msg = {
 		kind,
 		flags,
 		depth,
 		gas,
-		*recipient,
-		*sender,
+		recipient,
+		sender,
 		input_data,
 		input_size,
-		*value,
+		value,
 		{{0}}, // create2_salt: not required for execution
 		{{0}}, // code_address: not required for execution
 		0,     // code
 		0,     // code_size
-		code_hash,
+		has_code_hash ? &code_hash : NULL,
 	};
 
 	struct evmc_host_context* context = (struct evmc_host_context*)context_index;
@@ -305,10 +314,11 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 
 	ctxId := addHostContext(ctx)
 
-	var cCodeHash *C.evmc_bytes32
+	var cCodeHash C.evmc_bytes32
+	hasCodeHash := C.int(0)
 	if codeHash != nil {
-		hash := evmcBytes32(*codeHash)
-		cCodeHash = &hash
+		cCodeHash = evmcBytes32(*codeHash)
+		hasCodeHash = 1
 	}
 
 	txBlobHashes := ctx.GetTxContext().BlobHashes
@@ -318,14 +328,13 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 		defer pnr.Unpin()
 	}
 
-	// FIXME: Clarify passing by pointer vs passing by value.
 	evmcRecipient := evmcAddress(recipient)
 	evmcSender := evmcAddress(sender)
 	evmcValue := evmcBytes32(value)
 	result := C.execute_wrapper(vm.handle, C.uintptr_t(ctxId), uint32(rev),
 		C.enum_evmc_call_kind(kind), flags, C.int32_t(depth), C.int64_t(gas),
-		&evmcRecipient, &evmcSender, bytesPtr(input), C.size_t(len(input)), &evmcValue,
-		cCodeHash, bytesPtr(code), C.size_t(len(code)))
+		evmcRecipient, evmcSender, bytesPtr(input), C.size_t(len(input)),
+		evmcValue, cCodeHash, hasCodeHash, bytesPtr(code), C.size_t(len(code)))
 	removeHostContext(ctxId)
 
 	res.Output = C.GoBytes(unsafe.Pointer(result.output_data), C.int(result.output_size))
@@ -335,9 +344,7 @@ func (vm *VM) Execute(ctx HostContext, rev Revision,
 		err = Error(result.status_code)
 	}
 
-	if result.release != nil {
-		C.evmc_release_result(&result)
-	}
+	C.release_result(result)
 
 	return res, err
 }
