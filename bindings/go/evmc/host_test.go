@@ -49,6 +49,10 @@ func (host *testHostContext) GetTxContext() TxContext {
 	return txContext
 }
 
+func (host *testHostContext) GetBlobHashes() []Hash {
+	return nil
+}
+
 func (host *testHostContext) GetBlockHash(number int64) Hash {
 	return Hash{}
 }
@@ -105,6 +109,35 @@ func TestGetBlockNumberFromTxContext(t *testing.T) {
 	if gasLeft != 94 {
 		t.Errorf("execution gas left is incorrect: %d", gasLeft)
 	}
+	if err != nil {
+		t.Errorf("execution returned unexpected error: %v", err)
+	}
+}
+
+type blobTxHostContext struct {
+	testHostContext
+	blobHashes []Hash
+}
+
+func (host *blobTxHostContext) GetTxContext() TxContext {
+	return TxContext{BlobHashes: host.blobHashes}
+}
+
+func (host *blobTxHostContext) GetBlobHashes() []Hash {
+	return host.blobHashes
+}
+
+func TestExecute_PinsBlobHashes(t *testing.T) {
+	// BLOCKNUMBER PUSH1 0 MSTORE MSIZE PUSH1 0 RETURN, to make the VM ask for the tx context.
+	code := []byte("\x43\x60\x00\x52\x59\x60\x00\xf3")
+
+	vm, _ := Load(modulePath)
+	defer vm.Destroy()
+
+	addr := Address{}
+	h := Hash{}
+	host := &blobTxHostContext{blobHashes: make([]Hash, 3)}
+	_, err := vm.Execute(host, Cancun, Call, false, false, 1, 100, addr, addr, nil, h, nil, code)
 	if err != nil {
 		t.Errorf("execution returned unexpected error: %v", err)
 	}
